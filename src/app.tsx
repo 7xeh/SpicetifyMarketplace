@@ -7,10 +7,20 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import Grid from "./components/Grid";
 import ReadmePage from "./components/ReadmePage";
 import { ALL_TABS, CUSTOM_APP_PATH, LOCALSTORAGE_KEYS } from "./constants";
+import { waitForSpicetify } from "./logic/SpicetifyReady";
 import { hydrateMarketplaceStorage, marketplaceStorage } from "./logic/Storage";
 import { getLocalStorageDataFromKey } from "./logic/Utils";
 import locales from "./resources/locales";
 import type { Config, TabItemConfig } from "./types/marketplace-types";
+
+// This module is evaluated before Spicetify has finished populating its namespaces on a hard reload
+const getClientLocale = () => {
+  try {
+    return Spicetify?.Locale?.getLocale?.() || "en";
+  } catch {
+    return "en";
+  }
+};
 
 i18n
   .use(initReactI18next) // passes i18n down to react-i18next
@@ -18,7 +28,7 @@ i18n
     // the translations
     resources: locales,
     // Use Spotify's client locale, not the embedded browser's (they can differ)
-    lng: Spicetify.Locale.getLocale(),
+    lng: getClientLocale(),
     fallbackLng: "en",
     interpolation: {
       escapeValue: false // react already safes from xss => https://www.i18next.com/translation-function/interpolation#unescape
@@ -123,6 +133,12 @@ class App extends React.Component<
   }
 
   async componentDidMount() {
+    // A hard reload (Ctrl+Shift+R) renders us before Spicetify.Platform etc. exist
+    await waitForSpicetify();
+
+    const clientLocale = getClientLocale();
+    if (clientLocale !== i18n.language) await i18n.changeLanguage(clientLocale);
+
     await hydrateMarketplaceStorage();
     this.CONFIG = this.createConfig();
     this.setState({

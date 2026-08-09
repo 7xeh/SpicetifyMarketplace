@@ -134,6 +134,7 @@
   flex-direction: column;
   align-items: flex-end;
   flex-grow: 1;
+  gap: 2px;
 }
 .searchbar-bar {
   border-style: solid;
@@ -144,9 +145,133 @@
   color: var(--spice-text) !important;
 }
 
+.marketplace-searchbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+
+  .searchbar-bar {
+    padding-left: 34px;
+    padding-right: 30px;
+    width: 100%;
+    min-width: 180px;
+
+    &::-webkit-search-cancel-button {
+      appearance: none;
+    }
+  }
+
+  &__icon {
+    position: absolute;
+    left: 12px;
+    display: inline-flex;
+    color: var(--spice-subtext);
+    pointer-events: none;
+  }
+
+  &__clear {
+    position: absolute;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border: none;
+    border-radius: 50%;
+    background-color: transparent;
+    color: var(--spice-subtext);
+    cursor: pointer;
+
+    &:hover {
+      color: var(--spice-text);
+    }
+  }
+
+  &__status {
+    color: var(--spice-subtext);
+    font-size: 0.75rem;
+    padding-right: 4px;
+  }
+}
+
+.marketplace-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 60px;
+  text-align: center;
+  color: var(--spice-text);
+
+  &__title {
+    margin: 0;
+  }
+
+  &__hint {
+    margin: 0;
+    color: var(--spice-subtext);
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+}
+
 .marketplace-footer {
   margin: auto;
   text-align: center;
+
+  &__end {
+    margin: 60px 0;
+    color: var(--spice-subtext);
+  }
+}
+
+.marketplace-load-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 60px 0;
+
+  &__spinner {
+    margin-top: -60px;
+  }
+
+  &__button {
+    padding: 10px 24px;
+    border: 1px solid var(--spice-button-disabled);
+    border-radius: 500px;
+    background-color: transparent;
+    color: var(--spice-text);
+    font-weight: 700;
+    cursor: pointer;
+    transition-duration: constants.$transition-default;
+
+    &:hover:not(:disabled) {
+      background-color: var(--spice-button-disabled);
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    &--primary {
+      border-color: transparent;
+      background-color: var(--spice-button);
+      color: var(--spice-main);
+
+      &:hover:not(:disabled) {
+        filter: brightness(1.1);
+        background-color: var(--spice-button);
+      }
+    }
+  }
 }
 
 // "Add CSS" button

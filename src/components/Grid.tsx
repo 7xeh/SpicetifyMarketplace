@@ -8,7 +8,7 @@ const Spicetify = window.Spicetify;
 import { ITEMS_PER_REQUEST, LATEST_RELEASE_URL, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../constants";
 import { MAIN_VIEW_SCROLL_SELECTORS, querySelectorFirst } from "../logic/Dom";
 import { fetchAppManifest, fetchCssSnippets, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
-import { fetchGitHubJson } from "../logic/GitHubApi";
+import { fetchGitHubJson, isGitHubRateLimited } from "../logic/GitHubApi";
 import { openModal } from "../logic/LaunchModals";
 import { CACHE_TTL } from "../logic/RequestCache";
 import { marketplaceStorage } from "../logic/Storage";
@@ -27,12 +27,24 @@ import Card, { type Card as CardClass } from "./Card/Card";
 import ErrorBoundary from "./ErrorBoundary";
 import DownloadIcon from "./Icons/DownloadIcon";
 import LoadingIcon from "./Icons/LoadingIcon";
-import LoadMoreIcon from "./Icons/LoadMoreIcon";
 import SettingsIcon from "./Icons/SettingsIcon";
 import ThemeDeveloperToolsIcon from "./Icons/ThemeDeveloperToolsIcon";
+import LoadMoreButton from "./LoadMoreButton";
+import SearchBar from "./SearchBar";
 import SortBox from "./Sortbox";
 import { TopBarContent } from "./TabBar";
 import Tooltip from "./Tooltip";
+
+const SEARCH_DEBOUNCE_MS = 250;
+const SCROLL_LOAD_THRESHOLD_PX = 400;
+const MAX_AUTO_LOAD_PAGES = 20;
+
+const CARD_TYPES = [
+  { handle: "extension", name: "Extensions" },
+  { handle: "theme", name: "Themes" },
+  { handle: "snippet", name: "Snippets" },
+  { handle: "app", name: "Apps" }
+] as const;
 
 class Grid extends React.Component<
   {
@@ -40,12 +52,14 @@ class Grid extends React.Component<
     CONFIG: Config;
     updateAppConfig: (CONFIG: Config) => void;
     // TODO: there's probably a better way to make TS not complain about the withTranslation HOC
-    t: (key: string) => string;
+    t: (key: string, options?: Record<string, unknown>) => string;
   },
   {
     version: string;
     newUpdate: boolean;
+    searchInput: string;
     searchValue: string;
+    loadingAll: boolean;
     cards: CardClass[];
     tabs: TabItemConfig[];
     rest: boolean;
@@ -68,7 +82,9 @@ class Grid extends React.Component<
     this.state = {
       version: MARKETPLACE_VERSION,
       newUpdate: false,
+      searchInput: "",
       searchValue: "",
+      loadingAll: false,
       cards: [],
       tabs: props.CONFIG.tabs,
       rest: true,
@@ -96,6 +112,52 @@ class Grid extends React.Component<
   BLACKLIST: string[] | undefined;
   SNIPPETS: Snippet[] | undefined;
   viewPort: Element | null = null;
+  searchDebounce: ReturnType<typeof setTimeout> | null = null;
+  scrollFrame: number | null = null;
+  cancelLoadAll = false;
+
+  setSearch = (searchInput: string) => {
+    this.setState({ searchInput });
+
+    if (this.searchDebounce) clearTimeout(this.searchDebounce);
+    this.searchDebounce = setTimeout(() => {
+      this.searchDebounce = null;
+      this.setState({ searchValue: searchInput.trim().toLowerCase() });
+    }, SEARCH_DEBOUNCE_MS);
+  };
+
+  clearSearch = () => {
+    if (this.searchDebounce) clearTimeout(this.searchDebounce);
+    this.searchDebounce = null;
+    this.setState({ searchInput: "", searchValue: "" });
+  };
+
+  stopLoadAll = () => {
+    this.cancelLoadAll = true;
+  };
+
+  async loadAllPages() {
+    if (this.state.loadingAll || this.endOfList) return;
+
+    this.cancelLoadAll = false;
+    this.setState({ loadingAll: true });
+
+    try {
+      for (let page = 0; page < MAX_AUTO_LOAD_PAGES; page++) {
+        if (this.cancelLoadAll || this.endOfList || isGitHubRateLimited()) break;
+
+        const before = this.cardList.length;
+        if (!this.requestQueue.length) this.requestQueue.unshift([]);
+        await this.loadAmount(this.requestQueue[0], ITEMS_PER_REQUEST);
+
+        // Nothing new came back, so there is no point asking again
+        if (this.cardList.length === before) break;
+      }
+    } finally {
+      this.cancelLoadAll = false;
+      this.setState({ loadingAll: false });
+    }
+  }
 
   // TODO: should I put this in Grid state?
   getInstalledTheme() {
@@ -430,11 +492,11 @@ class Grid extends React.Component<
    * @returns {void}
    */
   loadMore() {
-    if (!this.state.rest || this.endOfList) return;
+    if (!this.state.rest || this.endOfList || this.state.loadingAll) return Promise.resolve();
 
     // loadAmount() shifts the queue when it finishes, so there may not be one left to reuse
     if (!this.requestQueue.length) this.requestQueue.unshift([]);
-    this.loadAmount(this.requestQueue[0], ITEMS_PER_REQUEST);
+    return this.loadAmount(this.requestQueue[0], ITEMS_PER_REQUEST);
   }
 
   /**
@@ -521,6 +583,9 @@ class Grid extends React.Component<
       viewPort.removeEventListener("scroll", this.checkScroll);
     }
     this.viewPort = null;
+    this.cancelLoadAll = true;
+    if (this.searchDebounce) clearTimeout(this.searchDebounce);
+    if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
   }
 
   async checkForUpdates() {
@@ -547,11 +612,17 @@ class Grid extends React.Component<
    */
   // Add scroll event listener with type
   isScrolledBottom(event: Event): void {
+    // Scroll fires far faster than we can act on it, so coalesce to one check per frame
+    if (this.scrollFrame !== null) return;
+
     const viewPort = event.target as HTMLElement;
-    if (viewPort.scrollTop + viewPort.clientHeight >= viewPort.scrollHeight) {
-      // At bottom, load more posts
-      this.loadMore();
-    }
+    this.scrollFrame = requestAnimationFrame(() => {
+      this.scrollFrame = null;
+      if (viewPort.scrollTop + viewPort.clientHeight >= viewPort.scrollHeight - SCROLL_LOAD_THRESHOLD_PX) {
+        // Near the bottom, load more posts
+        void this.loadMore();
+      }
+    });
   }
 
   setActiveTheme(themeKey: string) {
@@ -564,8 +635,40 @@ class Grid extends React.Component<
     return this.state.activeScheme;
   }
 
+  groupCards() {
+    const { searchValue, activeThemeKey } = this.state;
+    const groups = new Map<string, React.ReactElement[]>(CARD_TYPES.map((cardType) => [cardType.handle, []]));
+    const seen = new Set<string>();
+    let matches = 0;
+
+    for (const card of this.cardList) {
+      const group = groups.get(card.props.type);
+      if (!group) continue;
+      if (!cardMatchesSearch(card.props.item, searchValue)) continue;
+
+      // Filter out duplicates to prevent spamming
+      const dedupeKey = `${card.props.type}:${String(card.key)}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      // Clone the cards and update the prop to trigger re-render
+      group.push(React.cloneElement(card, { activeThemeKey, key: card.key }));
+      matches++;
+    }
+
+    return { groups, matches };
+  }
+
   render() {
     const { t } = this.props;
+    const { searchInput, searchValue, endOfList, rest, loadingAll } = this.state;
+    const { groups, matches } = this.groupCards();
+    const loadedCount = this.cardList.length;
+    const isSearching = Boolean(searchValue);
+    const isLoading = !rest || loadingAll;
+
+    const searchStatus = isSearching && loadedCount ? t("grid.searchStatus", { matches, loaded: loadedCount }) : null;
+
     return (
       <section className="contentSpacing">
         <div className="marketplace-header">
@@ -615,17 +718,13 @@ class Grid extends React.Component<
                 sortBySelectedFn={(a) => a.key === this.getActiveScheme()}
               />
             ) : null}
-            <div className="searchbar--bar__wrapper">
-              <input
-                className="searchbar-bar"
-                type="text"
-                placeholder={`${t("grid.search")} ${t(`tabs.${this.CONFIG.activeTab}`)}...`}
-                value={this.state.searchValue}
-                onChange={(event) => {
-                  this.setState({ searchValue: event.target.value });
-                }}
-              />
-            </div>
+            <SearchBar
+              value={searchInput}
+              placeholder={`${t("grid.search")} ${t(`tabs.${this.CONFIG.activeTab}`)}...`}
+              status={searchStatus}
+              onChange={this.setSearch}
+              onClear={this.clearSearch}
+            />
             <Tooltip label={t("settings.title")} renderInline={true} placement="bottom">
               <button
                 type="button"
@@ -640,30 +739,8 @@ class Grid extends React.Component<
           </div>
         </div>
         {/* Add a header and grid for each card type if it has any cards */}
-        {[
-          { handle: "extension", name: "Extensions" },
-          { handle: "theme", name: "Themes" },
-          { handle: "snippet", name: "Snippets" },
-          { handle: "app", name: "Apps" }
-        ].map((cardType) => {
-          const searchValue = this.state.searchValue.trim().toLowerCase();
-          const cardsOfType = this.cardList
-            .filter((card) => card.props.type === cardType.handle)
-            .filter((card) => cardMatchesSearch(card.props.item, searchValue))
-            .map((card) => {
-              // Clone the cards and update the prop to trigger re-render
-              return React.cloneElement(card, {
-                activeThemeKey: this.state.activeThemeKey,
-                key: card.key
-              });
-            })
-            .filter(
-              (
-                card,
-                index,
-                cards // Filter out duplicates to prevent spamming
-              ) => cards.findIndex((c) => c.key === card.key) === index
-            );
+        {CARD_TYPES.map((cardType) => {
+          const cardsOfType = groups.get(cardType.handle) ?? [];
 
           if (cardsOfType.length) {
             return (
@@ -686,6 +763,18 @@ class Grid extends React.Component<
           }
           return null;
         })}
+        {/* Nothing matched the search, so explain why instead of showing a blank page */}
+        {isSearching && matches === 0 && loadedCount > 0 ? (
+          <div className="marketplace-empty">
+            <h3 className="marketplace-empty__title">{t("grid.noResults", { query: searchInput.trim() })}</h3>
+            <p className="marketplace-empty__hint">{endOfList ? t("grid.noResultsFinal") : t("grid.noResultsHint")}</p>
+            <div className="marketplace-empty__actions">
+              <Button onClick={this.clearSearch}>{t("grid.clearSearch")}</Button>
+              {!endOfList && !loadingAll ? <Button onClick={() => void this.loadAllPages()}>{t("grid.loadAll")}</Button> : null}
+              {loadingAll ? <Button onClick={this.stopLoadAll}>{t("grid.stopLoading")}</Button> : null}
+            </div>
+          </div>
+        ) : null}
         {/* Add snippets button if on snippets tab */}
         {this.CONFIG.activeTab === "Snippets" ? (
           <Button classes={["marketplace-add-snippet-btn"]} onClick={() => openModal("ADD_SNIPPET")}>
@@ -693,14 +782,23 @@ class Grid extends React.Component<
           </Button>
         ) : null}
         <footer className="marketplace-footer">
-          {!this.state.endOfList ? (
-            this.state.rest && this.state.cards.length > 0 ? (
-              <LoadMoreIcon onClick={this.loadMore.bind(this)} />
+          {endOfList ? (
+            loadedCount > 0 ? (
+              <p className="marketplace-footer__end">{t("grid.endOfList")}</p>
             ) : (
-              <LoadingIcon />
+              <div style={{ height: "64px" }} />
             )
+          ) : loadedCount === 0 ? (
+            <LoadingIcon />
           ) : (
-            <div style={{ height: "64px" }} />
+            <LoadMoreButton
+              loading={isLoading}
+              loadingAll={loadingAll}
+              searching={isSearching}
+              onLoadMore={() => void this.loadMore()}
+              onLoadAll={() => void this.loadAllPages()}
+              onStop={this.stopLoadAll}
+            />
           )}
         </footer>
         <ErrorBoundary context="TopBarContent" compact={true}>
