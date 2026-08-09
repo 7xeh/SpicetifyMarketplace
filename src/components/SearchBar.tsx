@@ -44,7 +44,13 @@ const SearchBar = ({ value, placeholder, status, onChange, onClear }: SearchBarP
           }}
         />
         {value ? (
-          <button type="button" className="marketplace-searchbar__clear" aria-label={t("grid.clearSearch")} title={t("grid.clearSearch")} onClick={clear}>
+          <button
+            type="button"
+            className="marketplace-searchbar__clear"
+            aria-label={t("grid.clearSearch")}
+            title={t("grid.clearSearch")}
+            onClick={clear}
+          >
             <CloseIcon />
           </button>
         ) : null}
