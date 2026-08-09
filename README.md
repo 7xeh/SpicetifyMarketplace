@@ -1,6 +1,6 @@
-# Spicetify Marketplace
+# Spicetify Marketplace v2
 
-A maintained fork of [spicetify/marketplace](https://github.com/spicetify/marketplace).
+Continued maintenance of Marketplace v2, forked from [spicetify/marketplace](https://github.com/spicetify/marketplace).
 
 <p>
   <a href="https://github.com/7xeh/SpicetifyMarketplace/releases/latest">
@@ -20,9 +20,13 @@ Marketplace lets you **browse, download, and install** extensions, themes, and C
 
 ## Why this fork exists
 
-Spotify ships breaking changes on its own schedule, and upstream Marketplace hasn't been keeping pace. Bugs that make the app unusable have sat open for a while, so rather than wait, I picked it up and started fixing them.
+Spicetify is building Marketplace v3. That's the right call, and it's where their attention should be — but v3 isn't out yet, and v2 is what everyone is running in the meantime.
 
-This is not a rewrite or a rebrand. It's the same Marketplace, maintained. Everything upstream does still works the same way, and anything worth sending back upstream will be.
+Spotify doesn't pause for that. It keeps shipping client updates that break things, and v2 has been sitting with bugs that make it unusable while the effort goes into its replacement.
+
+So this fork keeps v2 alive until v3 lands. That's the whole scope: fix what's broken, harden it against the next Spotify update, leave the architecture alone. No rewrite, no rebrand, no competing vision — v3 is the future, this is just the bridge to it.
+
+When v3 ships, this fork has done its job.
 
 ## Install
 
@@ -40,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/7xeh/SpicetifyMarketplace/main/reso
 
 The installer detects an existing Marketplace install — whether it came from upstream or from here — removes it cleanly, and replaces it. It will install Spicetify for you if it isn't already present.
 
-Your settings and installed extensions, themes, and snippets live inside Spotify's own storage and survive the swap. Switching back to upstream is just running their installer again.
+Your settings and installed extensions, themes, and snippets live inside Spotify's own storage and survive the swap. Going back to upstream v2 — or moving to v3 when it arrives — is just running their installer instead.
 
 To remove it:
 
@@ -48,7 +52,7 @@ To remove it:
 iwr -useb https://raw.githubusercontent.com/7xeh/SpicetifyMarketplace/main/resources/install.ps1 -OutFile "$env:TEMP\mp.ps1"; & "$env:TEMP\mp.ps1" -UninstallOnly
 ```
 
-## What's different
+## What's different from upstream v2
 
 **Fixes**
 
@@ -70,7 +74,7 @@ iwr -useb https://raw.githubusercontent.com/7xeh/SpicetifyMarketplace/main/resou
 
 ## Contributing
 
-Issues and pull requests are welcome. If your problem also affects upstream, filing it there too is a good idea — this fork exists to fix things, not to fragment the ecosystem.
+Issues and pull requests are welcome. If your problem also affects upstream v2, filing it there too is worth doing — the point of this fork is to keep v2 working, not to fragment the ecosystem or pull effort away from v3.
 
 Development setup, publishing your own extensions and themes, and localization are unchanged from upstream:
 
@@ -83,6 +87,8 @@ Publishing works exactly as before — tag your repo `spicetify-extensions`, `sp
 
 ## Credits
 
-Built by [CharlieS1103](https://github.com/CharlieS1103), [theRealPadster](https://github.com/theRealPadster), and everyone who has contributed to Spicetify Marketplace. This fork stands entirely on their work and keeps the original MIT license.
+Marketplace was built by [CharlieS1103](https://github.com/CharlieS1103), [theRealPadster](https://github.com/theRealPadster), and everyone who has contributed to it over the years. This fork is their work with the rough edges sanded off, and it keeps the original MIT license.
+
+Go support [Spicetify](https://github.com/spicetify/cli) and Marketplace v3 — that's where this all ends up.
 
 Made with [Spicetify Creator](https://github.com/spicetify/spicetify-creator).
