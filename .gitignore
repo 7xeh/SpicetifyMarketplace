@@ -155,3 +155,7 @@ dist/
 # package managers
 package-lock.json
 yarn.lock
+
+# Release artifacts
+marketplace.zip
+marketplace-dist/

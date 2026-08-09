@@ -153,11 +153,12 @@ if [ "$FROM_SOURCE" != "1" ] && resolve_release_asset; then
 	echo "EXTRACTING"
 	unzip -q -d "$WORK_DIR/unpacked" -o "$WORK_DIR/marketplace.zip"
 
-	if [ -d "$WORK_DIR/unpacked/marketplace-dist" ]; then
-		DIST_DIR="$WORK_DIR/unpacked/marketplace-dist"
-	else
-		DIST_DIR="$WORK_DIR/unpacked"
+	dist_manifest=$(find "$WORK_DIR/unpacked" -maxdepth 3 -name manifest.json -type f | head -n 1)
+	if [ -z "$dist_manifest" ]; then
+		echo "ERROR: the release archive does not contain a manifest.json."
+		exit 1
 	fi
+	DIST_DIR=$(dirname "$dist_manifest")
 else
 	if [ "$FROM_SOURCE" != "1" ]; then
 		echo "No marketplace.zip release asset found on $REPO; building from source instead."

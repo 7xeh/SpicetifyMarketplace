@@ -48,9 +48,12 @@ jobs:
           check-name: Push
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 10
-      - name: Download target branch
-
-        run: curl -s -o marketplace.zip https://codeload.github.com/${{ github.repository }}/zip/refs/heads/dist
+      - name: Download and repack the dist branch
+        run: |
+          curl -sfL -o dist.zip "https://codeload.github.com/${{ github.repository }}/zip/refs/heads/dist"
+          unzip -q dist.zip
+          mv "$(basename '${{ github.repository }}')-dist" marketplace-dist
+          zip -qr marketplace.zip marketplace-dist
       - name: Publish the release
         uses: softprops/action-gh-release@v1
         with:

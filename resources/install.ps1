@@ -285,12 +285,16 @@ try {
         Invoke-WebRequest -Uri $releaseUri -UseBasicParsing -OutFile $marketArchivePath
 
         Write-Host -Object 'Unzipping and installing...' -ForegroundColor 'Cyan'
-        Expand-Archive -Path $marketArchivePath -DestinationPath $workPath -Force
+        $extractPath = Join-Path -Path $workPath -ChildPath 'unpacked'
+        Expand-Archive -Path $marketArchivePath -DestinationPath $extractPath -Force
 
-        $distPath = Join-Path -Path $workPath -ChildPath 'marketplace-dist'
-        if (-not (Test-Path -Path $distPath)) {
-            $distPath = $workPath
+        $manifestFile = Get-ChildItem -Path $extractPath -Filter 'manifest.json' -Recurse -File -Depth 2 |
+            Sort-Object { $_.FullName.Length } |
+            Select-Object -First 1
+        if (-not $manifestFile) {
+            throw 'The release archive does not contain a manifest.json.'
         }
+        $distPath = $manifestFile.Directory.FullName
     }
     else {
         $distPath = Build-FromSource -Repository $Repo -SourceBranch $Branch -WorkPath $workPath
