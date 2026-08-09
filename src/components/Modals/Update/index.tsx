@@ -1,7 +1,7 @@
 import { t } from "i18next";
 import React from "react";
 
-import { LATEST_RELEASE_URL, MARKETPLACE_VERSION, RELEASES_URL } from "../../../constants";
+import { GITHUB_NAME, GITHUB_OWNER, LATEST_RELEASE_URL, MARKETPLACE_VERSION, RELEASES_URL, UPGRADE_GUIDE_URL } from "../../../constants";
 import { getMarkdownHTML } from "../../../logic/Utils";
 
 async function fetchLatestReleaseInfo(): Promise<{
@@ -12,12 +12,15 @@ async function fetchLatestReleaseInfo(): Promise<{
     const result = await fetch(LATEST_RELEASE_URL);
     const resultJson = await result.json();
     const { body, tag_name, message } = resultJson;
-    return body && tag_name && !message
-      ? {
-          version: tag_name.replace("v", ""),
-          changelog: await getMarkdownHTML(body.match(/## What's Changed([\s\S]*?)(\r\n\r|\n\n##)/)[1], "spicetify", "marketplace")
-        }
-      : null;
+    if (!body || !tag_name || message) return null;
+
+    // Releases without a trailing section only have the one heading, so fall back to the whole body
+    const changes = body.match(/## What's Changed([\s\S]*?)(\r\n\r|\n\n##)/)?.[1] ?? body;
+
+    return {
+      version: tag_name.replace("v", ""),
+      changelog: await getMarkdownHTML(changes, GITHUB_OWNER, GITHUB_NAME)
+    };
   } catch (error) {
     console.error(error);
     return null;
@@ -52,7 +55,7 @@ function UpdateModal(): React.ReactElement {
       <hr />
       <div id="marketplace-update-guide">
         <h3 className="marketplace-update-header">{t("updateModal.howToUpgrade")}</h3>
-        <a href="https://github.com/spicetify/marketplace/wiki/Installation">{t("updateModal.viewGuide")}</a>
+        <a href={UPGRADE_GUIDE_URL}>{t("updateModal.viewGuide")}</a>
       </div>
     </div>
   );

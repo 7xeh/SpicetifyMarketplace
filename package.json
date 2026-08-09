@@ -1,12 +1,12 @@
 {
   "name": "marketplace",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
-  "homepage": "https://github.com/spicetify/marketplace",
+  "homepage": "https://github.com/7xeh/SpicetifyMarketplace",
   "bugs": {
-    "url": "https://github.com/spicetify/marketplace/issues"
+    "url": "https://github.com/7xeh/SpicetifyMarketplace/issues"
   },
-  "repository": "github:spicetify/marketplace",
+  "repository": "github:7xeh/SpicetifyMarketplace",
   "scripts": {
     "build": "spicetify-creator",
     "build:local": "spicetify-creator --out=dist --minify",

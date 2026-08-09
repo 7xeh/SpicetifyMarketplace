@@ -45,6 +45,12 @@ export const SNIPPETS_URL = "https://raw.githubusercontent.com/spicetify/marketp
 
 export const BLACKLIST_URL = "https://raw.githubusercontent.com/spicetify/marketplace/main/resources/blacklist.json";
 
-export const RELEASES_URL = "https://github.com/spicetify/marketplace/releases";
+export const GITHUB_OWNER = "7xeh";
 
-export const LATEST_RELEASE_URL = "https://api.github.com/repos/spicetify/marketplace/releases/latest";
+export const GITHUB_NAME = "SpicetifyMarketplace";
+
+export const RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_NAME}/releases`;
+
+export const LATEST_RELEASE_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_NAME}/releases/latest`;
+
+export const UPGRADE_GUIDE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_NAME}#install`;
