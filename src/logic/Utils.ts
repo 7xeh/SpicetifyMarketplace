@@ -38,6 +38,8 @@ export const getLocalStorageDataFromKey = (key: string, fallback?: unknown) => {
  * @returns True if the URL matches the pattern
  */
 const matchesBlacklistPattern = (url: string, pattern: string): boolean => {
+  if (typeof url !== "string" || typeof pattern !== "string") return false;
+
   const normalizedUrl = url.toLowerCase();
   const normalizedPattern = pattern.toLowerCase();
 
@@ -55,7 +57,42 @@ const matchesBlacklistPattern = (url: string, pattern: string): boolean => {
  * @returns True if the URL is blacklisted
  */
 export const isBlacklisted = (url: string, blacklist: string[]): boolean => {
+  if (!Array.isArray(blacklist)) return false;
   return blacklist.some((pattern) => matchesBlacklistPattern(url, pattern));
+};
+
+export const getCardTitle = (item?: CardItem | Snippet | null): string => {
+  if (!item) return "";
+  return (typeof item.title === "string" && item.title) || (typeof item.manifest?.name === "string" && item.manifest.name) || "";
+};
+
+export const isRenderableCardItem = (item: unknown): item is CardItem | Snippet => {
+  if (!item || typeof item !== "object") return false;
+  return getCardTitle(item as CardItem | Snippet).length > 0;
+};
+
+export const cardMatchesSearch = (item: CardItem | Snippet | undefined | null, searchValue: string): boolean => {
+  if (!searchValue) return true;
+  if (!item) return false;
+
+  const haystack: string[] = [];
+  const push = (value: unknown) => {
+    if (typeof value === "string" && value) haystack.push(value.toLowerCase());
+  };
+
+  push(item.title);
+  push(item.manifest?.name);
+  push(item.user);
+  push(item.repo);
+
+  if (Array.isArray(item.authors)) {
+    for (const author of item.authors) push(author?.name);
+  }
+  if (Array.isArray(item.tags)) {
+    for (const tag of item.tags) push(tag);
+  }
+
+  return haystack.some((value) => value.includes(searchValue));
 };
 
 /**
@@ -670,9 +707,7 @@ export const addExtensionToSpicetifyConfig = (main?: string) => {
  */
 const compareNames = (a: CardItem | Snippet, b: CardItem | Snippet) => {
   // Snippets have a title, but no manifest
-  const aName = a.title || a?.manifest?.name || "";
-  const bName = b.title || b?.manifest?.name || "";
-  return aName.localeCompare(bName);
+  return getCardTitle(a).localeCompare(getCardTitle(b));
 };
 
 /**
@@ -681,7 +716,7 @@ const compareNames = (a: CardItem | Snippet, b: CardItem | Snippet) => {
  */
 const compareCreated = (a: CardItem | Snippet, b: CardItem | Snippet) => {
   // Abort compare if items are missing created
-  if (a.created === undefined || b.created === undefined) return 0;
+  if (!a?.created || !b?.created) return 0;
 
   const aDate = new Date(a.created);
   const bDate = new Date(b.created);
@@ -694,14 +729,14 @@ const compareCreated = (a: CardItem | Snippet, b: CardItem | Snippet) => {
  */
 const compareUpdated = (a: CardItem | Snippet, b: CardItem | Snippet) => {
   // Abort compare if items are missing lastUpdated
-  if (a.lastUpdated === undefined || b.lastUpdated === undefined) return 0;
+  if (!a?.lastUpdated || !b?.lastUpdated) return 0;
 
   const aDate = new Date(a.lastUpdated);
   const bDate = new Date(b.lastUpdated);
   return bDate.getTime() - aDate.getTime();
 };
 
-export const sortCardItems = (cardItems: CardItem[] | Snippet[], sortMode: string) => {
+export const sortCardItems = (cardItems: (CardItem | Snippet)[], sortMode: string) => {
   switch (sortMode) {
     case "a-z":
       cardItems.sort((a, b) => compareNames(a, b));
@@ -722,7 +757,7 @@ export const sortCardItems = (cardItems: CardItem[] | Snippet[], sortMode: strin
       cardItems.sort((a, b) => compareUpdated(b, a));
       break;
     default:
-      cardItems.sort((a, b) => b.stars - a.stars);
+      cardItems.sort((a, b) => (b?.stars ?? 0) - (a?.stars ?? 0));
       break;
   }
 };

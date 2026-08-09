@@ -1,0 +1,60 @@
+.marketplace-error {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 32px 0;
+  color: var(--spice-text);
+
+  &--compact {
+    align-items: flex-start;
+    gap: 8px;
+    padding: 16px;
+    margin: 8px 0;
+    border: 1px solid var(--spice-button-disabled);
+    border-radius: 8px;
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+
+  &__message {
+    margin: 0;
+    color: var(--spice-subtext);
+  }
+
+  &__stack {
+    max-height: 240px;
+    overflow: auto;
+    padding: 12px;
+    border-radius: 6px;
+    background-color: var(--spice-card);
+    color: var(--spice-subtext);
+    font-family: monospace;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  &__button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 500px;
+    background-color: var(--spice-button);
+    color: var(--spice-main);
+    font-weight: 700;
+    cursor: pointer;
+
+    &:hover {
+      filter: brightness(1.1);
+    }
+  }
+}

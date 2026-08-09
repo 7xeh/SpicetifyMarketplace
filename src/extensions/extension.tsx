@@ -5,7 +5,9 @@
 import { t } from "i18next";
 
 import { ITEMS_PER_REQUEST, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../constants";
-import { fetchAppManifest, fetchExtensionManifest, fetchThemeManifest, getBlacklist } from "../logic/FetchRemotes";
+import { fetchAppManifest, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
+import { isGitHubRateLimited } from "../logic/GitHubApi";
+import { pruneRequestCache } from "../logic/RequestCache";
 import { hydrateMarketplaceStorage, marketplaceStorage } from "../logic/Storage";
 import {
   addExtensionToSpicetifyConfig,
@@ -19,12 +21,13 @@ import {
   injectColourScheme,
   // TODO: there's a slightly different copy of this function in Card.ts?
   injectUserCSS,
-  isBlacklisted,
   isGithubRawUrl,
   parseCSS,
   resetMarketplace
 } from "../logic/Utils";
 import type { RepoType } from "../types/marketplace-types";
+
+const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 (async function init() {
   if (!Spicetify.LocalStorage || !Spicetify.showNotification) {
@@ -194,30 +197,7 @@ import type { RepoType } from "../types/marketplace-types";
  */
 async function queryRepos(type: RepoType, pageNum = 1) {
   const BLACKLIST: string[] = JSON.parse(window.sessionStorage.getItem("marketplace:blacklist") || "[]");
-
-  let url = `https://api.github.com/search/repositories?per_page=${ITEMS_PER_REQUEST}&q=${encodeURIComponent(`topic:spicetify-${type}s`)}`;
-  if (pageNum) url += `&page=${pageNum}`;
-
-  const allRepos =
-    JSON.parse(window.sessionStorage.getItem(`spicetify-${type}s-page-${pageNum}`) || "null") ||
-    (await fetch(url)
-      .then((res) => res.json())
-      .catch(() => null));
-
-  if (!allRepos?.items) {
-    Spicetify.showNotification(t("notifications.tooManyRequests"), true, 5000);
-    return { items: [] };
-  }
-
-  window.sessionStorage.setItem(`spicetify-${type}s-page-${pageNum}`, JSON.stringify(allRepos));
-
-  const filteredResults = {
-    ...allRepos,
-    page_count: allRepos.items.length,
-    items: allRepos.items.filter((item) => !isBlacklisted(item.html_url, BLACKLIST))
-  };
-
-  return filteredResults;
+  return getTaggedRepos(`spicetify-${type}s`, pageNum, BLACKLIST, true);
 }
 
 /**
@@ -227,8 +207,13 @@ async function queryRepos(type: RepoType, pageNum = 1) {
  * @returns TODO
  */
 async function loadPageRecursive(type: RepoType, pageNum: number) {
+  if (isGitHubRateLimited()) {
+    console.debug(`Skipping ${type} preload while rate limited`);
+    return;
+  }
+
   const pageOfRepos = await queryRepos(type, pageNum);
-  appendInformationToLocalStorage(pageOfRepos, type);
+  await appendInformationToLocalStorage(pageOfRepos, type);
 
   // Sets the amount of items that have thus been fetched
   const soFarResults = ITEMS_PER_REQUEST * pageNum + pageOfRepos.page_count;
@@ -244,6 +229,7 @@ async function loadPageRecursive(type: RepoType, pageNum: number) {
 (async function initializePreload() {
   console.debug("Preloading extensions and themes...");
   window.sessionStorage.clear();
+  pruneRequestCache(MAX_CACHE_AGE_MS);
   const BLACKLIST = await getBlacklist();
   window.sessionStorage.setItem("marketplace:blacklist", JSON.stringify(BLACKLIST));
 
@@ -268,6 +254,8 @@ async function loadPageRecursive(type: RepoType, pageNum: number) {
 })();
 
 async function appendInformationToLocalStorage(array, type: RepoType) {
+  if (!Array.isArray(array?.items)) return;
+
   // This system should make it so themes and extensions are stored concurrently
   for (const repo of array.items) {
     if (type === "theme") await fetchThemeManifest(repo.contents_url, repo.default_branch, repo.stargazers_count);

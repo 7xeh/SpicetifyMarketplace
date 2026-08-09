@@ -3,8 +3,10 @@ import { z } from "zod";
 
 import { BLACKLIST_URL, ITEMS_PER_REQUEST, SNIPPETS_URL } from "../constants";
 import type { CardItem, RepoTopic, Snippet } from "../types/marketplace-types";
+import { fetchGitHubJson, fetchJsonResource } from "./GitHubApi";
+import { CACHE_TTL, readCache, writeCache } from "./RequestCache";
 import { marketplaceStorage } from "./Storage";
-import { addToSessionStorage, isBlacklisted, processAuthors } from "./Utils";
+import { isBlacklisted, processAuthors } from "./Utils";
 
 const manifestSchema = z
   .object({
@@ -37,6 +39,44 @@ const manifestSchema = z
   })
   .passthrough();
 
+const snippetSchema = z
+  .object({
+    title: z.string().trim().min(1),
+    description: z
+      .string()
+      .nullish()
+      .transform((description) => description || ""),
+    code: z.string(),
+    preview: z
+      .string()
+      .nullish()
+      .transform((preview) => preview || "")
+  })
+  .passthrough();
+
+type ParsedManifest = z.infer<typeof manifestSchema>;
+
+type SearchResponse = {
+  items?: unknown[];
+  total_count?: number;
+};
+
+type SearchRepo = {
+  html_url: string;
+  contents_url: string;
+  default_branch: string;
+  stargazers_count: number;
+  archived: boolean;
+  pushed_at: string;
+  created_at: string;
+};
+
+const isSearchRepo = (item: unknown): item is SearchRepo => {
+  if (!item || typeof item !== "object") return false;
+  const repo = item as Partial<SearchRepo>;
+  return typeof repo.html_url === "string" && typeof repo.contents_url === "string";
+};
+
 // TODO: add sort type, order, etc?
 // https://docs.github.com/en/github/searching-for-information-on-github/searching-on-github/searching-for-repositories#search-by-topic
 // https://docs.github.com/en/rest/reference/search#search-repositories
@@ -57,28 +97,28 @@ export async function getTaggedRepos(tag: RepoTopic, page = 1, BLACKLIST: string
   // Sorting params (not implemented for Marketplace yet)
   // if (sortConfig.by.match(/top|controversial/) && sortConfig.time) {
   //     url += `&t=${sortConfig.time}`
-  const allRepos =
-    JSON.parse(window.sessionStorage.getItem(`${tag}-page-${page}`) || "null") ||
-    (await fetch(url)
-      .then((res) => res.json())
-      .catch(() => null));
 
-  if (!allRepos?.items) {
-    Spicetify.showNotification(t("notifications.tooManyRequests"), true, 5000);
-    return { items: [] };
+  const { data, rateLimited } = await fetchGitHubJson<SearchResponse>(url, {
+    // Page 0 and page 1 hit the same endpoint, so they must share a cache entry
+    cacheKey: `${tag}-page-${page || 1}`,
+    ttlMs: CACHE_TTL.searchPage
+  });
+
+  if (!data || !Array.isArray(data.items)) {
+    // The rate limit notification is raised by the fetcher, so don't double up on it
+    if (!rateLimited) Spicetify.showNotification(t("notifications.tooManyRequests"), true, 5000);
+    return { items: [] as SearchRepo[], total_count: 0, page_count: 0 };
   }
 
-  window.sessionStorage.setItem(`${tag}-page-${page}`, JSON.stringify(allRepos));
+  const repos = data.items.filter(isSearchRepo);
 
-  const filteredResults = {
-    ...allRepos,
+  return {
+    total_count: typeof data.total_count === "number" ? data.total_count : repos.length,
     // Include count of all items on the page, since we're filtering the blacklist below,
     // which can mess up the paging logic
-    page_count: allRepos.items.length,
-    items: allRepos.items.filter((item) => !isBlacklisted(item.html_url, BLACKLIST) && (showArchived || !item.archived))
+    page_count: repos.length,
+    items: repos.filter((item) => !isBlacklisted(item.html_url, BLACKLIST) && (showArchived || !item.archived))
   };
-
-  return filteredResults;
 }
 
 // Workaround for not spamming console with 404s
@@ -116,43 +156,35 @@ async function fetchRepoManifest(url: string) {
  * @param branch Default branch name (e.g. main or master)
  * @returns The manifest object
  */
-async function getRepoManifest(user: string, repo: string, branch: string) {
-  const key = `${user}-${repo}`;
-  const sessionStorageItem = window.sessionStorage.getItem(key);
-  const failedSessionStorageItems = JSON.parse(window.sessionStorage.getItem("noManifests") || "[]");
-  const url = `https://raw.githubusercontent.com/${user}/${repo}/${branch}/manifest.json`;
-  if (!sessionStorageItem && failedSessionStorageItems.includes(url)) return [];
+async function getRepoManifest(user: string, repo: string, branch: string): Promise<ParsedManifest[]> {
+  const cacheKey = `manifest:${user}/${repo}@${branch}`;
+  const cached = readCache<ParsedManifest[]>(cacheKey);
 
-  let manifests: ReturnType<typeof JSON.parse>;
-  let loadedFromCache = false;
-
-  if (sessionStorageItem) {
-    try {
-      manifests = JSON.parse(sessionStorageItem);
-      loadedFromCache = true;
-    } catch (error) {
-      console.warn(`Invalid cached Marketplace manifest from ${user}/${repo}`, error);
-      window.sessionStorage.removeItem(key);
-      manifests = await fetchRepoManifest(url);
-    }
-  } else {
-    manifests = await fetchRepoManifest(url);
+  if (cached && Array.isArray(cached.value)) {
+    // Repos without a manifest are re-checked more often than repos with one
+    const ttl = cached.value.length ? CACHE_TTL.manifest : CACHE_TTL.repo;
+    if (cached.age <= ttl) return cached.value;
   }
 
+  const url = `https://raw.githubusercontent.com/${user}/${repo}/${branch}/manifest.json`;
+  let manifests: ReturnType<typeof JSON.parse> = await fetchRepoManifest(url);
+
   if (!manifests) {
-    addToSessionStorage([url], "noManifests");
+    // Fall back to the expired copy rather than dropping the repo from the grid entirely
+    if (cached && Array.isArray(cached.value) && cached.value.length) return cached.value;
+    writeCache(cacheKey, []);
     return [];
   }
   if (!Array.isArray(manifests)) manifests = [manifests];
 
-  const parsedManifests = manifests.flatMap((manifest) => {
+  const parsedManifests: ParsedManifest[] = manifests.flatMap((manifest) => {
     const parsed = manifestSchema.safeParse(manifest);
     if (parsed.success) return [parsed.data];
     console.warn(`Invalid Marketplace manifest from ${user}/${repo}`, parsed.error);
     return [];
   });
 
-  if (!loadedFromCache) window.sessionStorage.setItem(key, JSON.stringify(parsedManifests));
+  writeCache(cacheKey, parsedManifests);
   return parsedManifests;
 }
 
@@ -176,7 +208,7 @@ export async function fetchExtensionManifest(contents_url: string, branch: strin
     const manifests = await getRepoManifest(user, repo, branch);
 
     // Manifest is initially parsed
-    const parsedManifests: CardItem[] = manifests.reduce((accum, manifest) => {
+    const parsedManifests: CardItem[] = (manifests as ReturnType<typeof JSON.parse>[]).reduce((accum, manifest) => {
       // Check if manifest object is designated for Extensions
       if (manifest?.name && manifest.description && manifest.main) {
         const selectedBranch = manifest.branch || branch;
@@ -239,7 +271,7 @@ export async function fetchThemeManifest(contents_url: string, branch: string, s
 
     // Manifest is initially parsed
     // const parsedManifests: ThemeCardItem[] = manifests.reduce((accum, manifest) => {
-    const parsedManifests: CardItem[] = manifests.reduce((accum, manifest) => {
+    const parsedManifests: CardItem[] = (manifests as ReturnType<typeof JSON.parse>[]).reduce((accum, manifest) => {
       // Check if manifest object is designated for a Theme
       if (manifest?.name && manifest?.usercss && manifest?.description) {
         const selectedBranch = manifest.branch || branch;
@@ -302,7 +334,7 @@ export async function fetchAppManifest(contents_url: string, branch: string, sta
     const manifests = await getRepoManifest(user, repo, branch);
 
     // Manifest is initially parsed
-    const parsedManifests: CardItem[] = manifests.reduce((accum, manifest) => {
+    const parsedManifests: CardItem[] = (manifests as ReturnType<typeof JSON.parse>[]).reduce((accum, manifest) => {
       // Check if manifest object is designated for a Custom App
       if (manifest?.name && manifest.description && !manifest.main && !manifest.usercss) {
         const selectedBranch = manifest.branch || branch;
@@ -352,10 +384,13 @@ export async function fetchAppManifest(contents_url: string, branch: string, sta
  * @returns String array of blacklisted repos
  */
 export const getBlacklist = async () => {
-  const json = await fetch(BLACKLIST_URL)
-    .then((res) => res.json())
-    .catch(() => ({}));
-  return json.repos as string[] | undefined;
+  const { data } = await fetchJsonResource<{ repos?: unknown }>(BLACKLIST_URL, {
+    cacheKey: "blacklist",
+    ttlMs: CACHE_TTL.resource
+  });
+
+  if (!Array.isArray(data?.repos)) return [];
+  return data.repos.filter((repo): repo is string => typeof repo === "string");
 };
 
 /**
@@ -363,13 +398,21 @@ export const getBlacklist = async () => {
  * @returns Array of snippets
  */
 export const fetchCssSnippets = async (hideInstalled = false) => {
-  const snippetsJSON = (await fetch(SNIPPETS_URL)
-    .then((res) => res.json())
-    .catch(() => [])) as Snippet[];
-  if (!snippetsJSON.length) return [];
+  const { data } = await fetchJsonResource<unknown>(SNIPPETS_URL, {
+    cacheKey: "snippets",
+    ttlMs: CACHE_TTL.resource
+  });
 
-  const snippets = snippetsJSON.reduce<Snippet[]>((accum, snippet) => {
-    const snip = { ...snippet } as Snippet;
+  if (!Array.isArray(data) || !data.length) return [];
+
+  const snippets = data.reduce<Snippet[]>((accum, rawSnippet) => {
+    const parsed = snippetSchema.safeParse(rawSnippet);
+    if (!parsed.success) {
+      console.warn("Invalid Marketplace snippet", parsed.error);
+      return accum;
+    }
+
+    const snip = { ...parsed.data } as unknown as Snippet;
 
     // Because the card component looks for an imageURL prop
     if (snip.preview) {

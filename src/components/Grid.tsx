@@ -6,13 +6,25 @@ import semver from "semver";
 const Spicetify = window.Spicetify;
 
 import { ITEMS_PER_REQUEST, LATEST_RELEASE_URL, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../constants";
+import { MAIN_VIEW_SCROLL_SELECTORS, querySelectorFirst } from "../logic/Dom";
 import { fetchAppManifest, fetchCssSnippets, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
+import { fetchGitHubJson } from "../logic/GitHubApi";
 import { openModal } from "../logic/LaunchModals";
+import { CACHE_TTL } from "../logic/RequestCache";
 import { marketplaceStorage } from "../logic/Storage";
-import { generateSchemesOptions, generateSortOptions, getLocalStorageDataFromKey, injectColourScheme, sortCardItems } from "../logic/Utils";
+import {
+  cardMatchesSearch,
+  generateSchemesOptions,
+  generateSortOptions,
+  getLocalStorageDataFromKey,
+  injectColourScheme,
+  isRenderableCardItem,
+  sortCardItems
+} from "../logic/Utils";
 import type { CardItem, CardType, Config, SchemeIni, Snippet, TabItemConfig } from "../types/marketplace-types";
 import Button from "./Button";
 import Card, { type Card as CardClass } from "./Card/Card";
+import ErrorBoundary from "./ErrorBoundary";
 import DownloadIcon from "./Icons/DownloadIcon";
 import LoadingIcon from "./Icons/LoadingIcon";
 import LoadMoreIcon from "./Icons/LoadMoreIcon";
@@ -83,6 +95,7 @@ class Grid extends React.Component<
   updateAppConfig: (CONFIG: Config) => void;
   BLACKLIST: string[] | undefined;
   SNIPPETS: Snippet[] | undefined;
+  viewPort: Element | null = null;
 
   // TODO: should I put this in Grid state?
   getInstalledTheme() {
@@ -109,6 +122,12 @@ class Grid extends React.Component<
    */
   appendCard(item: CardItem | Snippet, type: CardType, activeTab: string) {
     if (activeTab !== this.props.CONFIG.activeTab) return;
+
+    // Items restored from storage predate manifest validation, so they can be missing a title
+    if (!isRenderableCardItem(item)) {
+      console.warn("Marketplace: skipping malformed card item", { type, item });
+      return;
+    }
 
     const card = (
       <Card
@@ -242,7 +261,7 @@ class Grid extends React.Component<
 
         for (const type in installedStuff) {
           if (installedStuff[type].length) {
-            const installedOfType: CardItem[] = [];
+            const installedOfType: (CardItem | Snippet)[] = [];
             for (const itemKey of installedStuff[type]) {
               // TODO: err handling
               const installedItem = getLocalStorageDataFromKey(itemKey);
@@ -250,6 +269,12 @@ class Grid extends React.Component<
               if (this.requestQueue.length > 1 && queue !== this.requestQueue[0]) {
                 // Stop this queue from continuing to fetch and append to cards list
                 return -1;
+              }
+
+              // The key can be listed as installed while its data is gone (partial reset, failed write, ...)
+              if (!isRenderableCardItem(installedItem)) {
+                console.warn(`Marketplace: dropping unreadable installed item "${itemKey}"`);
+                continue;
               }
 
               installedOfType.push(installedItem);
@@ -405,9 +430,11 @@ class Grid extends React.Component<
    * @returns {void}
    */
   loadMore() {
-    if (this.state.rest && !this.endOfList) {
-      this.loadAmount(this.requestQueue[0], ITEMS_PER_REQUEST);
-    }
+    if (!this.state.rest || this.endOfList) return;
+
+    // loadAmount() shifts the queue when it finishes, so there may not be one left to reuse
+    if (!this.requestQueue.length) this.requestQueue.unshift([]);
+    this.loadAmount(this.requestQueue[0], ITEMS_PER_REQUEST);
   }
 
   /**
@@ -453,32 +480,15 @@ class Grid extends React.Component<
   * If the cardList isn't loaded, it loads the cardList.
   */
   async componentDidMount() {
-    // Checks for new Marketplace updates
-    fetch(LATEST_RELEASE_URL)
-      .then((res) => res.json())
-      .then(
-        (result) => {
-          if (result.message) throw result;
-          this.setState({
-            version: result.name
-          });
-
-          try {
-            this.setState({ newUpdate: semver.gt(result.name, MARKETPLACE_VERSION) });
-          } catch (err) {
-            console.error(err);
-          }
-        },
-        (error) => {
-          console.error("Failed to check for updates", error);
-        }
-      );
+    void this.checkForUpdates();
 
     this.gridUpdateTabs = this.updateTabs.bind(this);
     this.gridUpdatePostsVisual = this.updatePostsVisual.bind(this);
 
-    const viewPort = document.querySelector(".os-viewport") ?? document.querySelector("#main .main-view-container__scroll-node");
+    const viewPort = querySelectorFirst(MAIN_VIEW_SCROLL_SELECTORS);
+    this.viewPort = viewPort;
     this.checkScroll = this.isScrolledBottom.bind(this);
+
     if (viewPort) {
       viewPort.addEventListener("scroll", this.checkScroll);
       if (this.cardList.length) {
@@ -488,6 +498,9 @@ class Grid extends React.Component<
         }
         return;
       }
+    } else {
+      // Infinite scroll is unavailable, but the Load More button still works
+      console.warn(`Marketplace: no scroll container matched ${MAIN_VIEW_SCROLL_SELECTORS.join(", ")}`);
     }
 
     // Load blacklist and snippets
@@ -502,10 +515,29 @@ class Grid extends React.Component<
    */
   componentWillUnmount(): void {
     this.gridUpdateTabs = this.gridUpdatePostsVisual = null;
-    const viewPort = document.querySelector(".os-viewport") ?? document.querySelector("#main .main-view-container__scroll-node");
+    const viewPort = this.viewPort ?? querySelectorFirst(MAIN_VIEW_SCROLL_SELECTORS);
     if (viewPort) {
       this.lastScroll = viewPort.scrollTop;
       viewPort.removeEventListener("scroll", this.checkScroll);
+    }
+    this.viewPort = null;
+  }
+
+  async checkForUpdates() {
+    const { data } = await fetchGitHubJson<{ name?: string; message?: string }>(LATEST_RELEASE_URL, {
+      cacheKey: "marketplace-latest-release",
+      ttlMs: CACHE_TTL.release,
+      notifyOnRateLimit: false
+    });
+
+    if (!data?.name || data.message) return;
+
+    this.setState({ version: data.name });
+
+    try {
+      this.setState({ newUpdate: semver.gt(data.name, MARKETPLACE_VERSION) });
+    } catch (err) {
+      console.error(err);
     }
   }
 
@@ -614,20 +646,10 @@ class Grid extends React.Component<
           { handle: "snippet", name: "Snippets" },
           { handle: "app", name: "Apps" }
         ].map((cardType) => {
+          const searchValue = this.state.searchValue.trim().toLowerCase();
           const cardsOfType = this.cardList
             .filter((card) => card.props.type === cardType.handle)
-            .filter((card) => {
-              const searchValue = this.state.searchValue.trim().toLowerCase();
-              const { title, user, authors, tags } = card.props.item;
-
-              return (
-                !searchValue ||
-                title.toLowerCase().includes(searchValue) ||
-                user?.toLowerCase().includes(searchValue) ||
-                authors?.some((author) => author.name.toLowerCase().includes(searchValue)) ||
-                [...(tags ?? [])]?.some((tag) => tag.toLowerCase().includes(searchValue))
-              );
-            })
+            .filter((card) => cardMatchesSearch(card.props.item, searchValue))
             .map((card) => {
               // Clone the cards and update the prop to trigger re-render
               return React.cloneElement(card, {
@@ -646,18 +668,20 @@ class Grid extends React.Component<
           if (cardsOfType.length) {
             return (
               // Add a header for the card type
-              <div className="marketplace-content">
-                {/* Add a header for the card type */}
-                <h2 className="marketplace-card-type-heading">{t(`tabs.${cardType.name}`)}</h2>
-                {/* Add the grid and cards */}
-                <div
-                  className="marketplace-grid main-gridContainer-gridContainer main-gridContainer-fixedWidth"
-                  data-tab={this.CONFIG.activeTab}
-                  data-card-type={t(`tabs.${cardType.name}`)} // This is used for the "no installed x" in css
-                >
-                  {cardsOfType}
+              <ErrorBoundary key={cardType.handle} context={`Grid/${cardType.handle}`} compact={true}>
+                <div className="marketplace-content">
+                  {/* Add a header for the card type */}
+                  <h2 className="marketplace-card-type-heading">{t(`tabs.${cardType.name}`)}</h2>
+                  {/* Add the grid and cards */}
+                  <div
+                    className="marketplace-grid main-gridContainer-gridContainer main-gridContainer-fixedWidth"
+                    data-tab={this.CONFIG.activeTab}
+                    data-card-type={t(`tabs.${cardType.name}`)} // This is used for the "no installed x" in css
+                  >
+                    {cardsOfType}
+                  </div>
                 </div>
-              </div>
+              </ErrorBoundary>
             );
           }
           return null;
@@ -679,7 +703,9 @@ class Grid extends React.Component<
             <div style={{ height: "64px" }} />
           )}
         </footer>
-        <TopBarContent switchCallback={this.switchTo.bind(this)} links={this.CONFIG.tabs} activeLink={this.CONFIG.activeTab} />
+        <ErrorBoundary context="TopBarContent" compact={true}>
+          <TopBarContent switchCallback={this.switchTo.bind(this)} links={this.CONFIG.tabs} activeLink={this.CONFIG.activeTab} />
+        </ErrorBoundary>
       </section>
     );
   }

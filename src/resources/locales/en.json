@@ -113,6 +113,16 @@
       "loading": "Loading...",
       "errorLoading": "Error loading README"
     },
+    "errorBoundary": {
+      "title": "Marketplace could not be displayed",
+      "description": "Something went wrong while rendering Marketplace. This is usually caused by a Spotify update or by corrupted local data.",
+      "compact": "This section could not be displayed.",
+      "retry": "Try again",
+      "reload": "Reload Spotify",
+      "copyDetails": "Copy error details",
+      "detailsCopied": "Error details copied to clipboard",
+      "notification": "Marketplace hit an error while rendering"
+    },
     "github": "GitHub",
     "install": "Install",
     "remove": "Remove",
@@ -123,6 +133,7 @@
     "notifications": {
       "wrongLocalTheme": "Please set current_theme in config-xpui.ini to 'marketplace' to install themes using the Marketplace",
       "tooManyRequests": "Too many requests, cool down",
+      "rateLimited": "GitHub rate limit reached. Showing cached results, try again in {{minutes}} min",
       "noCdnConnection": "Marketplace is unable to connect to the CDN. Please check your Internet configuration",
       "markdownParsingError": "Error parsing markdown (HTTP {{status}})",
       "noReadmeFile": "No README was found",

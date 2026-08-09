@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Dropdown, { type Option } from "react-dropdown";
 import { withTranslation } from "react-i18next";
+import { attachAndKeepMounted, TOP_BAR_SELECTORS } from "../logic/Dom";
 import type { TabItemConfig } from "../types/marketplace-types";
 
 // NOTE: The label and value are the same (e.g. "Extensions")
@@ -58,21 +59,22 @@ const TabBarMore = React.memo<TabBarMoreProps>(function TabBarMore({ items, swit
 export const TopBarContent = (props: { links: TabItemConfig[]; activeLink: string; switchCallback: (option: Option) => void }) => {
   const tabBar = useRef<HTMLElement | null>(null);
 
-  const contextHandler = useCallback(() => {
-    // Move the marketplace-tabBar item to the main-topBar-topbarContent div
-    const topBarContent = document.querySelector(".main-topBar-topbarContentWrapper");
-    if (!tabBar?.current || !topBarContent) {
-      setTimeout(contextHandler, 100);
-      return;
-    }
-
-    topBarContent.appendChild(tabBar.current);
-  }, [tabBar.current]);
-
   useEffect(() => {
-    contextHandler();
-    return () => (tabBar.current || document.querySelector(".marketplace-tabBar"))?.remove();
-  });
+    const node = tabBar.current;
+    if (!node) return;
+
+    // Move the marketplace-tabBar item into Spotify's top bar, and put it back if Spotify re-renders it away
+    const detach = attachAndKeepMounted(node, TOP_BAR_SELECTORS, {
+      onMissing: () => {
+        console.warn(`Marketplace: no top bar matched ${TOP_BAR_SELECTORS.join(", ")}; leaving the tab bar inline`);
+      }
+    });
+
+    return () => {
+      detach();
+      document.querySelector(".marketplace-tabBar")?.remove();
+    };
+  }, []);
 
   return <TabBar ref={tabBar} links={props.links} activeLink={props.activeLink} switchCallback={props.switchCallback} />;
 };

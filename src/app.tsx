@@ -3,6 +3,7 @@ import React from "react";
 import { initReactI18next, withTranslation } from "react-i18next";
 
 import "./styles/styles.scss";
+import ErrorBoundary from "./components/ErrorBoundary";
 import Grid from "./components/Grid";
 import ReadmePage from "./components/ReadmePage";
 import { ALL_TABS, CUSTOM_APP_PATH, LOCALSTORAGE_KEYS } from "./constants";
@@ -138,9 +139,7 @@ class App extends React.Component<
     });
   };
 
-  render() {
-    if (!this.state.storageReady) return null;
-
+  renderRoute() {
     const { location, replace } = Spicetify.Platform.History;
     // If page state set to display readme, render it
     // (This location state data comes from Card.openReadme())
@@ -154,6 +153,12 @@ class App extends React.Component<
     }
 
     return <Grid title={t("grid.spicetifyMarketplace")} CONFIG={this.CONFIG} updateAppConfig={this.updateConfig} />;
+  }
+
+  render() {
+    if (!this.state.storageReady) return null;
+
+    return <ErrorBoundary context="App">{this.renderRoute()}</ErrorBoundary>;
   }
 }
 
