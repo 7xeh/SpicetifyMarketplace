@@ -8,10 +8,19 @@ type StoredRecord = {
   value: string;
 };
 
+const MAX_FLUSH_ROUNDS = 10;
+
 const cache = new Map<string, string>();
+const pendingWrites = new Set<Promise<unknown>>();
 let databasePromise: Promise<IDBDatabase | null> | null = null;
 let hydrationPromise: Promise<void> | null = null;
 let hydrated = false;
+
+function trackWrite<T>(write: Promise<T>) {
+  pendingWrites.add(write);
+  void write.catch(() => undefined).finally(() => pendingWrites.delete(write));
+  return write;
+}
 
 function shouldMigrateLocalStorageKey(key: string) {
   return key.startsWith(MARKETPLACE_KEY_PREFIX);
@@ -145,22 +154,31 @@ export const marketplaceStorage = {
 
   setItem(key: string, value: string) {
     cache.set(key, value);
-    void persistItem(key, value);
+    trackWrite(persistItem(key, value));
   },
 
   async setItemAsync(key: string, value: string) {
     cache.set(key, value);
-    await persistItem(key, value);
+    await trackWrite(persistItem(key, value));
   },
 
   removeItem(key: string) {
     cache.delete(key);
-    void removePersistedItem(key);
+    trackWrite(removePersistedItem(key));
   },
 
   async removeItemAsync(key: string) {
     cache.delete(key);
-    await removePersistedItem(key);
+    await trackWrite(removePersistedItem(key));
+  },
+
+  // Reloading Spotify drops the in-memory cache, so pending IndexedDB writes must land first
+  async flush() {
+    for (let round = 0; round < MAX_FLUSH_ROUNDS && pendingWrites.size; round++) {
+      await Promise.allSettled([...pendingWrites]);
+    }
+
+    if (pendingWrites.size) console.warn(`Marketplace: ${pendingWrites.size} storage writes did not settle before flushing`);
   },
 
   keys() {

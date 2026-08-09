@@ -451,35 +451,69 @@ export const initColorShiftLoop = (schemes: SchemeIni) => {
   }, 60 * 1000);
 };
 
-export const getColorFromImage = async (image: string) => {
-  let vibrancy = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.albumArtBasedColorVibrancy);
+// Spicetify.colorExtractor takes a Spotify URI, not an artwork URL
+export const getColorFromUri = async (uri: string): Promise<string | undefined> => {
+  const stored = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.albumArtBasedColorVibrancy, "PROMINENT");
   // Add a underscore before any uppercase characters, then make the whole string uppercase
-  vibrancy = vibrancy.replace(/([A-Z])/g, "_$1").toUpperCase();
-  const colorOptions = await Spicetify.colorExtractor(image);
-  const color = colorOptions[vibrancy];
-  return color.substring(1);
+  const vibrancy = String(stored)
+    .replace(/([A-Z])/g, "_$1")
+    .toUpperCase();
+
+  try {
+    const colorOptions = await Spicetify.colorExtractor(uri);
+    const color = colorOptions?.[vibrancy] ?? colorOptions?.PROMINENT;
+
+    if (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) {
+      console.warn(`Marketplace: no usable colour extracted for ${uri}`, color);
+      return undefined;
+    }
+
+    return color.substring(1);
+  } catch (error) {
+    console.error(`Marketplace: colour extraction failed for ${uri}`, error);
+    return undefined;
+  }
 };
 
-export const generateColorPalette = async (mainColor: string, numColors: number) => {
-  const mode = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.albumArtBasedColorMode);
+export const generateColorPalette = async (mainColor: string, numColors: number): Promise<string[]> => {
+  const mode = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.albumArtBasedColorMode, "monochrome-light");
   // Add a hyphen before any uppercase characters
-  const modeStr = mode.replace(/([A-Z])/g, "-$1").toLowerCase();
-  //fetch `https://www.thecolorapi.com/scheme?hex=${mainColor}&mode=${modeStr}&count=${numColors}`
-  const palette = await fetch(`https://www.thecolorapi.com/scheme?hex=${mainColor}&mode=${modeStr}&count=${numColors}`).then((response) =>
-    response.json()
-  );
-  // create an array of the hex values for the colors while also removing the #
-  const colorArray = palette.colors.map((color) => color.hex.value.substring(1));
-  return colorArray;
+  const modeStr = String(mode)
+    .replace(/([A-Z])/g, "-$1")
+    .toLowerCase();
+
+  try {
+    //fetch `https://www.thecolorapi.com/scheme?hex=${mainColor}&mode=${modeStr}&count=${numColors}`
+    const response = await fetch(`https://www.thecolorapi.com/scheme?hex=${mainColor}&mode=${modeStr}&count=${numColors}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const palette = await response.json();
+    if (!Array.isArray(palette?.colors)) throw new Error("Malformed palette response");
+
+    // create an array of the hex values for the colors while also removing the #
+    return palette.colors.map((color) => color?.hex?.value?.substring(1)).filter((value): value is string => Boolean(value));
+  } catch (error) {
+    console.error("Marketplace: could not generate a colour palette", error);
+    return [];
+  }
 };
 
-async function waitForAlbumArt(): Promise<string | undefined> {
-  // Only return when the album art is loaded
+async function waitForPlayerUri(timeoutMs = 10000): Promise<string | undefined> {
+  // Only return when the player has a track loaded
   return new Promise((resolve) => {
-    setInterval(() => {
-      const albumArtSrc = Spicetify.Player.data?.item?.metadata?.image_xlarge_url;
-      if (albumArtSrc) {
-        resolve(albumArtSrc);
+    const deadline = Date.now() + timeoutMs;
+
+    const interval = setInterval(() => {
+      const uri = Spicetify.Player.data?.item?.uri;
+      if (uri) {
+        clearInterval(interval);
+        resolve(uri);
+        return;
+      }
+
+      if (Date.now() >= deadline) {
+        clearInterval(interval);
+        resolve(undefined);
       }
     }, 50);
   });
@@ -490,16 +524,19 @@ export const initAlbumArtBasedColor = (scheme: ColourScheme) => {
   // and update the color scheme accordingly
   Spicetify.Player.addEventListener("songchange", async () => {
     await sleep(1000);
-    let albumArtSrc: string | undefined = Spicetify.Player.data?.item?.metadata?.image_xlarge_url;
+
+    const item = Spicetify.Player.data?.item;
+    // Local files have no artwork on Spotify's side, so there is nothing to extract
+    if (item?.isLocal) return;
 
     // If it doesn't exist, wait for it to load
-    if (albumArtSrc === null || albumArtSrc === undefined) {
-      albumArtSrc = await waitForAlbumArt();
-    }
+    const uri: string | undefined = item?.uri ?? (await waitForPlayerUri());
 
-    if (albumArtSrc) {
+    if (uri) {
       const numColors = new Set(Object.values(scheme)).size;
-      const mainColor: string = await getColorFromImage(albumArtSrc);
+      const mainColor = await getColorFromUri(uri);
+      if (!mainColor) return;
+
       const newColors = await generateColorPalette(mainColor, numColors);
       /*  Find which keys share the same value in the current scheme, create a new scheme that has the value as the key and all the keys in the old scheme as the value
       i.e.

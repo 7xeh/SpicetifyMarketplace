@@ -114,23 +114,23 @@ export class Card extends React.Component<
         console.debug(`New update pushed at: ${pushed_at}`);
         switch (this.props.type) {
           case "extension":
-            this.installExtension();
+            await this.installExtension();
             break;
           case "theme":
-            this.installTheme(true);
+            await this.installTheme(true);
             break;
         }
       }
     }
   }
 
-  buttonClicked() {
+  async buttonClicked() {
     if (this.props.type === "extension") {
       if (this.isInstalled()) {
         console.debug("Extension already installed, removing");
-        this.removeExtension();
+        await this.removeExtension();
       } else {
-        this.installExtension();
+        await this.installExtension();
       }
       openModal("RELOAD");
     } else if (this.props.type === "theme") {
@@ -160,16 +160,16 @@ export class Card extends React.Component<
     } else if (this.props.type === "snippet") {
       if (this.isInstalled()) {
         console.debug("Snippet already installed, removing");
-        this.removeSnippet();
+        await this.removeSnippet();
       } else {
-        this.installSnippet();
+        await this.installSnippet();
       }
     } else {
       console.error("Unknown card type");
     }
   }
 
-  installExtension() {
+  async installExtension() {
     console.debug(`Installing extension ${this.localStorageKey}`);
     // Add to localstorage (this stores a copy of all the card props in the localstorage)
     // TODO: can I clean this up so it's less repetition?
@@ -178,7 +178,7 @@ export class Card extends React.Component<
       return;
     }
     const { manifest, title, subtitle, authors, user, repo, branch, imageURL, extensionURL, readmeURL, lastUpdated, created } = this.props.item;
-    marketplaceStorage.setItem(
+    await marketplaceStorage.setItemAsync(
       this.localStorageKey,
       JSON.stringify({
         manifest,
@@ -202,24 +202,25 @@ export class Card extends React.Component<
     const installedExtensions = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedExtensions, []);
     if (installedExtensions.indexOf(this.localStorageKey) === -1) {
       installedExtensions.push(this.localStorageKey);
-      marketplaceStorage.setItem(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(installedExtensions));
+      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(installedExtensions));
     }
 
     console.debug("Installed");
     this.setState({ installed: true });
   }
 
-  removeExtension() {
+  async removeExtension() {
     const extValue = marketplaceStorage.getItem(this.localStorageKey);
     if (extValue) {
       console.debug(`Removing extension ${this.localStorageKey}`);
-      // Remove from localstorage
-      marketplaceStorage.removeItem(this.localStorageKey);
 
-      // Remove from installed list
+      // Remove from installed list first, so a lost write can never leave a dangling entry
       const installedExtensions = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedExtensions, []);
       const remainingInstalledExtensions = installedExtensions.filter((key) => key !== this.localStorageKey);
-      marketplaceStorage.setItem(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(remainingInstalledExtensions));
+      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(remainingInstalledExtensions));
+
+      // Remove from localstorage
+      await marketplaceStorage.removeItemAsync(this.localStorageKey);
 
       console.debug("Removed");
       this.setState({ installed: false });
@@ -375,9 +376,9 @@ export class Card extends React.Component<
     }
   }
 
-  installSnippet() {
+  async installSnippet() {
     console.debug(`Installing snippet ${this.localStorageKey}`);
-    marketplaceStorage.setItem(
+    await marketplaceStorage.setItemAsync(
       this.localStorageKey,
       JSON.stringify({
         code: this.props.item.code,
@@ -391,7 +392,7 @@ export class Card extends React.Component<
     const installedSnippetKeys = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedSnippets, []);
     if (installedSnippetKeys.indexOf(this.localStorageKey) === -1) {
       installedSnippetKeys.push(this.localStorageKey);
-      marketplaceStorage.setItem(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(installedSnippetKeys));
+      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(installedSnippetKeys));
     }
     const installedSnippets = installedSnippetKeys.map((key) => getLocalStorageDataFromKey(key));
     initializeSnippets(installedSnippets);
@@ -399,13 +400,13 @@ export class Card extends React.Component<
     this.setState({ installed: true });
   }
 
-  removeSnippet() {
-    marketplaceStorage.removeItem(this.localStorageKey);
-
-    // Remove from installed list
+  async removeSnippet() {
+    // Remove from installed list first, so a lost write can never leave a dangling entry
     const installedSnippetKeys = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedSnippets, []);
     const remainingInstalledSnippetKeys = installedSnippetKeys.filter((key) => key !== this.localStorageKey);
-    marketplaceStorage.setItem(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(remainingInstalledSnippetKeys));
+    await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(remainingInstalledSnippetKeys));
+
+    await marketplaceStorage.removeItemAsync(this.localStorageKey);
     const remainingInstalledSnippets = remainingInstalledSnippetKeys.map((key) => getLocalStorageDataFromKey(key));
     initializeSnippets(remainingInstalledSnippets);
 
@@ -556,7 +557,7 @@ export class Card extends React.Component<
                   label={this.props.type === "app" ? t("github") : IS_INSTALLED ? t("remove") : t("install")}
                   onClick={(e) => {
                     e.stopPropagation();
-                    this.buttonClicked();
+                    void this.buttonClicked();
                   }}
                 >
                   {/*If the extension, theme, or snippet is already installed, it will display trash, otherwise it displays download*/}

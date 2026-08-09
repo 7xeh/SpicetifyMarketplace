@@ -1,5 +1,6 @@
 import { t } from "i18next";
 import React from "react";
+import { marketplaceStorage } from "../../../logic/Storage";
 import Button from "../../Button";
 
 const ReloadModal = () => {
@@ -8,8 +9,9 @@ const ReloadModal = () => {
       <p>{t("reloadModal.description")}</p>
       <div className="marketplace-reload-modal__button-container">
         <Button
-          onClick={() => {
+          onClick={async () => {
             Spicetify.PopupModal.hide();
+            await marketplaceStorage.flush();
             location.reload();
           }}
         >

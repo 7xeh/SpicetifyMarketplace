@@ -21,7 +21,7 @@ class ReadmePage extends React.Component<
       readmeURL: string;
       readmeDir: string;
       type: CardType;
-      install: () => void;
+      install: () => void | Promise<void>;
       isInstalled: () => boolean;
     };
     title: string;
