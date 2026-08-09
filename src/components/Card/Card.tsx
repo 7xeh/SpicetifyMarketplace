@@ -68,8 +68,9 @@ export class Card extends React.Component<
     Object.assign(this, props);
 
     // Needs to be after Object.assign so an undefined 'tags' field doesn't overwrite the default []
-    this.tags = props.item.tags || [];
-    if (props.item.include) this.tags.push(t("grid.externalJS"));
+    // Copied, because pushing onto props.item.tags would mutate the shared item and duplicate tags on re-render
+    this.tags = Array.isArray(props.item.tags) ? [...props.item.tags] : [];
+    if (props.item.include?.length) this.tags.push(t("grid.externalJS"));
     if (props.item.archived) this.tags.push(t("grid.archived"));
 
     this.state = {
@@ -139,7 +140,7 @@ export class Card extends React.Component<
 
       if (this.isInstalled()) {
         console.debug("Theme already installed, removing");
-        this.removeTheme(this.localStorageKey);
+        await this.removeTheme(this.localStorageKey);
       } else {
         const localTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.localTheme);
         if (localTheme !== null && localTheme.toLowerCase() !== "marketplace") {
@@ -148,12 +149,12 @@ export class Card extends React.Component<
         }
 
         // Remove theme if already installed, then install the new theme
-        this.removeTheme();
-        this.installTheme();
+        await this.removeTheme();
+        await this.installTheme();
       }
 
       // If the new or previous theme has JS, prompt to reload
-      if (this.props.item.manifest?.include || previousTheme.include) openModal("RELOAD");
+      if (this.props.item.manifest?.include?.length || previousTheme.include?.length) openModal("RELOAD");
     } else if (this.props.type === "app") {
       // Open repo in new tab
       window.open(this.state.externalUrl, "_blank");
@@ -307,10 +308,10 @@ export class Card extends React.Component<
     const installedThemes = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedThemes, []);
     if (installedThemes.indexOf(this.localStorageKey) === -1) {
       installedThemes.push(this.localStorageKey);
-      marketplaceStorage.setItem(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(installedThemes));
+      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(installedThemes));
 
       // const usercssURL = `https://raw.github.com/${this.user}/${this.repo}/${this.branch}/${this.manifest.usercss}`;
-      marketplaceStorage.setItem(LOCALSTORAGE_KEYS.themeInstalled, this.localStorageKey);
+      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.themeInstalled, this.localStorageKey);
     }
 
     console.debug("Installed");
@@ -337,7 +338,7 @@ export class Card extends React.Component<
     this.setState({ installed: true });
   }
 
-  removeTheme(defaultThemeKey?: string | null) {
+  async removeTheme(defaultThemeKey?: string | null) {
     // If don't specify theme, remove the currently installed theme
     const themeKey = defaultThemeKey || marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
 
@@ -346,16 +347,16 @@ export class Card extends React.Component<
     if (themeKey && themeValue) {
       console.debug(`Removing theme ${themeKey}`);
 
-      // Remove from localstorage
-      marketplaceStorage.removeItem(themeKey);
-
-      // Remove record of installed theme
-      marketplaceStorage.removeItem(LOCALSTORAGE_KEYS.themeInstalled);
-
-      // Remove from installed list
+      // Remove from installed list first, so a lost write can never leave a dangling entry
       const installedThemes = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedThemes, []);
       const remainingInstalledThemes = installedThemes.filter((key) => key !== themeKey);
-      marketplaceStorage.setItem(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(remainingInstalledThemes));
+      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(remainingInstalledThemes));
+
+      // Remove record of installed theme
+      await marketplaceStorage.removeItemAsync(LOCALSTORAGE_KEYS.themeInstalled);
+
+      // Remove from localstorage
+      await marketplaceStorage.removeItemAsync(themeKey);
 
       console.debug("Removed");
 

@@ -7,7 +7,7 @@ import { t } from "i18next";
 import { ITEMS_PER_REQUEST, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../constants";
 import { fetchAppManifest, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
 import { isGitHubRateLimited } from "../logic/GitHubApi";
-import { pruneRequestCache } from "../logic/RequestCache";
+import { clearRequestCache, pruneRequestCache } from "../logic/RequestCache";
 import { hydrateMarketplaceStorage, marketplaceStorage } from "../logic/Storage";
 import {
   addExtensionToSpicetifyConfig,
@@ -50,6 +50,12 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
     reset: resetMarketplace,
     // Export all marketplace localstorage keys
     export: exportMarketplace,
+    // Drop cached GitHub responses without touching settings or installed items
+    clearCache: () => {
+      clearRequestCache();
+      window.sessionStorage.clear();
+      console.log("Marketplace cache cleared, reload to refetch");
+    },
     version: MARKETPLACE_VERSION
   };
 
