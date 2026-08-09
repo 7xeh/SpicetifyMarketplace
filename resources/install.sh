@@ -10,7 +10,6 @@ FROM_SOURCE="${MARKETPLACE_FROM_SOURCE:-0}"
 UNINSTALL_ONLY="${MARKETPLACE_UNINSTALL_ONLY:-0}"
 
 releases_uri="https://github.com/$REPO/releases"
-api_uri="https://api.github.com/repos/$REPO"
 default_color_uri="https://raw.githubusercontent.com/$REPO/$BRANCH/resources/color.ini"
 
 tag=""
@@ -68,23 +67,25 @@ remove_existing_marketplace() {
 }
 
 resolve_release_asset() {
+	# Release downloads are served straight from github.com and are not subject to the API rate limit
 	if [ -n "$tag" ]; then
-		release_json=$(curl -LsH 'Accept: application/json' "$api_uri/releases/tags/${tag}" 2>/dev/null || echo "")
+		download_uri="$releases_uri/download/$tag/marketplace.zip"
 	else
-		release_json=$(curl -LsH 'Accept: application/json' "$api_uri/releases/latest" 2>/dev/null || echo "")
+		download_uri="$releases_uri/latest/download/marketplace.zip"
 	fi
 
-	case "$release_json" in
-	*'"browser_download_url"'*'marketplace.zip'*) ;;
-	*) return 1 ;;
-	esac
+	status=$(curl -sIL -o /dev/null -w '%{http_code}' "$download_uri" 2>/dev/null || echo "000")
 
-	resolved_tag=${release_json#*\"tag_name\":\"}
-	resolved_tag=${resolved_tag%%\"*}
-	resolved_tag=${resolved_tag#v}
+	if [ "$status" = "200" ]; then
+		return 0
+	fi
 
-	download_uri="$releases_uri/download/v$resolved_tag/marketplace.zip"
-	return 0
+	if [ "$status" = "404" ]; then
+		echo "No marketplace.zip attached to the requested release of $REPO."
+	else
+		echo "Could not reach the release download for $REPO (HTTP $status)."
+	fi
+	return 1
 }
 
 build_from_source() {
@@ -146,7 +147,6 @@ trap 'rm -rf "$WORK_DIR"' EXIT INT TERM
 
 DIST_DIR=""
 if [ "$FROM_SOURCE" != "1" ] && resolve_release_asset; then
-	echo "FETCHING Version $resolved_tag"
 	echo "DOWNLOADING $download_uri"
 	curl --fail --location --progress-bar --output "$WORK_DIR/marketplace.zip" "$download_uri"
 

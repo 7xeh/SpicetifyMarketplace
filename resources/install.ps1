@@ -25,6 +25,9 @@ param(
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# Windows PowerShell renders a progress bar per chunk, which makes Invoke-WebRequest downloads crawl
+$ProgressPreference = 'SilentlyContinue'
+
 $legacyAppNames = @('marketplace', 'spicetify-marketplace')
 
 function Invoke-Spicetify {
@@ -126,25 +129,35 @@ function Get-ReleaseArchiveUri {
         [string]$ReleaseTag
     )
 
-    $apiUri = if ($ReleaseTag) {
-        "https://api.github.com/repos/$Repository/releases/tags/$ReleaseTag"
+    # Release downloads are served straight from github.com and are not subject to the API rate limit
+    $uri = if ($ReleaseTag) {
+        "https://github.com/$Repository/releases/download/$ReleaseTag/marketplace.zip"
     }
     else {
-        "https://api.github.com/repos/$Repository/releases/latest"
+        "https://github.com/$Repository/releases/latest/download/marketplace.zip"
     }
 
     try {
-        $release = Invoke-RestMethod -Uri $apiUri -UseBasicParsing -Headers @{ 'User-Agent' = 'spicetify-marketplace-install' }
+        Invoke-WebRequest -Uri $uri -UseBasicParsing -Method 'Head' -ErrorAction 'Stop' | Out-Null
+        return $uri
     }
     catch {
-        return $null
-    }
+        $status = $null
+        if ($_.Exception.PSObject.Properties.Name -contains 'Response' -and $_.Exception.Response) {
+            $status = [int]$_.Exception.Response.StatusCode
+        }
 
-    $asset = $release.assets | Where-Object { $_.name -eq 'marketplace.zip' } | Select-Object -First 1
-    if (-not $asset) {
+        if ($status -eq 404) {
+            $which = if ($ReleaseTag) { "release $ReleaseTag" } else { 'the latest release' }
+            Write-Host -Object "No marketplace.zip attached to $which of $Repository." -ForegroundColor 'Yellow'
+        }
+        else {
+            $detail = if ($status) { "HTTP $status" } else { $_.Exception.Message.Trim() }
+            Write-Host -Object "Could not reach the release download for $Repository ($detail)." -ForegroundColor 'Yellow'
+        }
+
         return $null
     }
-    return $asset.browser_download_url
 }
 
 function Build-FromSource {
@@ -179,6 +192,7 @@ function Build-FromSource {
     Write-Host -Object "Downloading source from $sourceUri" -ForegroundColor 'Cyan'
     Invoke-WebRequest -Uri $sourceUri -UseBasicParsing -OutFile $sourceZip
 
+    Write-Host -Object 'Extracting source...' -ForegroundColor 'Cyan'
     Expand-Archive -Path $sourceZip -DestinationPath $WorkPath -Force
     $sourceRoot = Get-ChildItem -Path $WorkPath -Directory | Select-Object -First 1
     if (-not $sourceRoot) {
@@ -275,7 +289,7 @@ try {
     if (-not $FromSource) {
         $releaseUri = Get-ReleaseArchiveUri -Repository $Repo -ReleaseTag $Tag
         if (-not $releaseUri) {
-            Write-Host -Object "No marketplace.zip release asset found on $Repo; building from source instead." -ForegroundColor 'Yellow'
+            Write-Host -Object 'Falling back to building from source, which needs Node 24+ and pnpm and takes a few minutes.' -ForegroundColor 'Yellow'
         }
     }
 
