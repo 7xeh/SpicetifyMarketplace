@@ -35,7 +35,13 @@ jobs:
           git config --global user.name "Github Actions"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git pull origin HEAD
-          git worktree add -B $TARGET_BRANCH dist origin/$TARGET_BRANCH
+          if git show-ref --verify --quiet "refs/remotes/origin/$TARGET_BRANCH"; then
+            start_point="origin/$TARGET_BRANCH"
+          else
+            echo "origin/$TARGET_BRANCH does not exist yet, bootstrapping an empty branch"
+            start_point="$(git commit-tree "$(git hash-object -t tree /dev/null)" -m "init $TARGET_BRANCH")"
+          fi
+          git worktree add -B $TARGET_BRANCH dist "$start_point"
 
       - name: Install Dependencies and Build
         run: |
