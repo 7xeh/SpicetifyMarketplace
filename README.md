@@ -4,7 +4,6 @@ Continued maintenance of Marketplace v2, forked from [spicetify/marketplace](htt
 
 [![Latest release](https://img.shields.io/github/v/release/7xeh/SpicetifyMarketplace?include_prereleases)](https://github.com/7xeh/SpicetifyMarketplace/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/7xeh/SpicetifyMarketplace/total.svg)](https://github.com/7xeh/SpicetifyMarketplace/releases)
-[![Commit activity](https://img.shields.io/github/commit-activity/m/7xeh/SpicetifyMarketplace)](https://github.com/7xeh/SpicetifyMarketplace/commits/main)
 
 Marketplace lets you browse, download, and install extensions, themes, and CSS snippets from within the Spotify desktop client. Custom apps are listed as well, although they still require manual installation.
 
