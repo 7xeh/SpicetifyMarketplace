@@ -59,6 +59,8 @@ This removes the custom app and its entries in the Spicetify configuration. If `
 ### Defect fixes
 
 - **Load More no longer crashes the client.** A card with a missing title caused an unhandled `TypeError` during render, which took down the entire grid. See [upstream issue #1215](https://github.com/spicetify/marketplace/issues/1215). The search predicate now tolerates absent fields, and malformed entries are discarded with a console warning rather than propagating.
+- **Removing an extension now persists.** Writes to IndexedDB were fire and forget, while the reload prompt called `location.reload()` immediately. A removal issues two writes, so an interrupted reload could apply one and lose the other, leaving an extension listed as installed but absent from the Installed tab. See [upstream issue #1186](https://github.com/spicetify/marketplace/issues/1186). Pending writes are now tracked and flushed before any reload, install and remove await their writes, and the installed list is updated before the item is deleted so a lost write cannot leave a dangling entry.
+- **Album art based colours now work.** `Spicetify.colorExtractor` expects a Spotify URI, but the artwork URL was being passed instead, so extraction failed on every track. See [upstream issue #1098](https://github.com/spicetify/marketplace/issues/1098). The track URI is now used, local files are skipped, and an unusable result is logged and ignored rather than throwing.
 - **Hard reloads no longer produce a blank page.** The app previously rendered before Spicetify had finished populating its API namespaces, so `Ctrl+Shift+R` could leave the view empty. Rendering is now deferred until the required namespaces are available.
 - **Spotify UI changes no longer break mounting.** The tab bar and scroll container are resolved through ordered fallback selector lists backed by a `MutationObserver`, replacing a single hardcoded class name and an unbounded retry loop. If Spotify renames an internal class, the affected feature degrades instead of failing outright.
 
@@ -67,6 +69,8 @@ This removes the custom app and its entries in the Spicetify configuration. If `
 - React error boundaries wrap the application, each card section, and the tab bar. Failures render a readable message with a copyable stack trace instead of an empty view.
 - GitHub responses are cached persistently, so a cold start no longer refetches every repository manifest.
 - Rate limiting is handled explicitly. HTTP 403 and 429 responses are detected, the reset window is respected, and cached results are served in place of an empty grid.
+- A `setInterval` in the album art colour watcher was never cleared, leaking a timer on every track change. It now clears on resolution and times out.
+- The update checker points at this repository rather than upstream, so it no longer offers an upstream release that would replace this build. A crash in the changelog parser on releases with a single section was also fixed.
 
 ### Search and browsing
 
