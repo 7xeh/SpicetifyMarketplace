@@ -498,16 +498,16 @@ export const generateColorPalette = async (mainColor: string, numColors: number)
   }
 };
 
-async function waitForPlayerUri(timeoutMs = 10000): Promise<string | undefined> {
+async function waitForPlayerItem(timeoutMs = 10000): Promise<Spicetify.PlayerTrack | undefined> {
   // Only return when the player has a track loaded
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs;
 
     const interval = setInterval(() => {
-      const uri = Spicetify.Player.data?.item?.uri;
-      if (uri) {
+      const item = Spicetify.Player.data?.item;
+      if (item?.uri) {
         clearInterval(interval);
-        resolve(uri);
+        resolve(item);
         return;
       }
 
@@ -525,19 +525,19 @@ export const initAlbumArtBasedColor = (scheme: ColourScheme) => {
   Spicetify.Player.addEventListener("songchange", async () => {
     await sleep(1000);
 
-    const item = Spicetify.Player.data?.item;
-    // Local files have no artwork on Spotify's side, so there is nothing to extract
-    if (item?.isLocal) return;
-
     // If it doesn't exist, wait for it to load
-    const uri: string | undefined = item?.uri ?? (await waitForPlayerUri());
+    const item = Spicetify.Player.data?.item?.uri ? Spicetify.Player.data.item : await waitForPlayerItem();
 
-    if (uri) {
+    // Local files have no artwork on Spotify's side, so there is nothing to extract
+    if (item?.uri && !item.isLocal) {
+      const uri = item.uri;
       const numColors = new Set(Object.values(scheme)).size;
       const mainColor = await getColorFromUri(uri);
       if (!mainColor) return;
 
       const newColors = await generateColorPalette(mainColor, numColors);
+      // An empty palette would inject an empty scheme and strip the theme's colours
+      if (!newColors.length) return;
       /*  Find which keys share the same value in the current scheme, create a new scheme that has the value as the key and all the keys in the old scheme as the value
       i.e.
       { "color1": "#000000", "color2": "#000000", "color3": "#FFFFFF" } ->
@@ -560,8 +560,8 @@ export const initAlbumArtBasedColor = (scheme: ColourScheme) => {
         })
       );
       colorMap = orderedColorMap;
-      // replace the keys in the color map with the new colors
-      const newScheme = {};
+      // replace the keys in the color map with the new colors, keeping any the palette did not cover
+      const newScheme = { ...scheme };
       for (const [, value] of colorMap.entries()) {
         const newColor = newColors.shift();
         if (newColor) {
