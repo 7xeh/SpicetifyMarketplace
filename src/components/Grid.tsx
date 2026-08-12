@@ -17,13 +17,14 @@ import {
   generateSchemesOptions,
   generateSortOptions,
   getLocalStorageDataFromKey,
+  getStringArrayFromKey,
   injectColourScheme,
   isRenderableCardItem,
   sortCardItems
 } from "../logic/Utils";
 import type { CardItem, CardType, Config, SchemeIni, Snippet, TabItemConfig } from "../types/marketplace-types";
 import Button from "./Button";
-import Card, { type Card as CardClass } from "./Card/Card";
+import Card, { type Card as CardClass, type CardProps } from "./Card/Card";
 import ErrorBoundary from "./ErrorBoundary";
 import DownloadIcon from "./Icons/DownloadIcon";
 import LoadingIcon from "./Icons/LoadingIcon";
@@ -51,7 +52,6 @@ class Grid extends React.Component<
     title: string;
     CONFIG: Config;
     updateAppConfig: (CONFIG: Config) => void;
-    // TODO: there's probably a better way to make TS not complain about the withTranslation HOC
     t: (key: string, options?: Record<string, unknown>) => string;
   },
   {
@@ -74,7 +74,6 @@ class Grid extends React.Component<
     Object.assign(this, props);
     this.updateAppConfig = props.updateAppConfig.bind(this);
 
-    // Fetches the sorting options, fetched from SortBox.js
     this.sortConfig = {
       by: getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.sort, "top")
     };
@@ -102,8 +101,6 @@ class Grid extends React.Component<
   requestPage = 0;
   cardList: CardClass[] = [];
   sortConfig: { by: string };
-  // TODO: why are these set up funny
-  // To get to the other side
   gridUpdateTabs: (() => void) | null;
   gridUpdatePostsVisual: (() => void) | null;
   checkScroll: (e: Event) => void;
@@ -150,7 +147,6 @@ class Grid extends React.Component<
         if (!this.requestQueue.length) this.requestQueue.unshift([]);
         await this.loadAmount(this.requestQueue[0], ITEMS_PER_REQUEST);
 
-        // Nothing new came back, so there is no point asking again
         if (this.cardList.length === before) break;
       }
     } finally {
@@ -159,7 +155,6 @@ class Grid extends React.Component<
     }
   }
 
-  // TODO: should I put this in Grid state?
   getInstalledTheme() {
     const installedThemeKey = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
     if (!installedThemeKey) return null;
@@ -167,8 +162,12 @@ class Grid extends React.Component<
     const installedThemeDataStr = marketplaceStorage.getItem(installedThemeKey);
     if (!installedThemeDataStr) return null;
 
-    const installedTheme = JSON.parse(installedThemeDataStr);
-    return installedTheme;
+    try {
+      return JSON.parse(installedThemeDataStr);
+    } catch (error) {
+      console.warn(`Marketplace: could not read the installed theme "${installedThemeKey}"`, error);
+      return null;
+    }
   }
 
   newRequest(amount: number | undefined) {
@@ -178,14 +177,9 @@ class Grid extends React.Component<
     this.loadAmount(queue, amount);
   }
 
-  /**
-   * @param {CardItem} item
-   * @param type The type of card
-   */
   appendCard(item: CardItem | Snippet, type: CardType, activeTab: string) {
     if (activeTab !== this.props.CONFIG.activeTab) return;
 
-    // Items restored from storage predate manifest validation, so they can be missing a title
     if (!isRenderableCardItem(item)) {
       console.warn("Marketplace: skipping malformed card item", { type, item });
       return;
@@ -194,14 +188,11 @@ class Grid extends React.Component<
     const card = (
       <Card
         item={item}
-        // Set key prop so items don't get stuck when switching tabs
         key={`${this.props.CONFIG.activeTab}:${item.user}:${item.title}`}
         CONFIG={this.CONFIG}
         visual={this.props.CONFIG.visual}
         type={type}
-        // This isn't used other than to trigger a re-render
         activeThemeKey={this.state.activeThemeKey}
-        // Pass along the functions to update Grid state on apply
         updateColourSchemes={this.updateColourSchemes.bind(this)}
         updateActiveTheme={this.setActiveTheme.bind(this)}
       />
@@ -210,14 +201,12 @@ class Grid extends React.Component<
     this.cardList.push(card as unknown as CardClass);
   }
 
-  // TODO: this isn't currently used, but it will be used for sorting (based on the SortBox component)
   updateSort(sortByValue) {
     if (sortByValue) {
       this.sortConfig.by = sortByValue;
       marketplaceStorage.setItem(LOCALSTORAGE_KEYS.sort, sortByValue);
     }
 
-    // this.requestPage = null;
     this.requestPage = 0;
     this.cardList = [];
     this.setState({
@@ -247,7 +236,6 @@ class Grid extends React.Component<
     this.CONFIG.activeTab = option.value;
     marketplaceStorage.setItem(LOCALSTORAGE_KEYS.activeTab, option.value);
     this.cardList = [];
-    // this.requestPage = null;
     this.requestPage = 0;
     this.setState({
       cards: [],
@@ -259,11 +247,7 @@ class Grid extends React.Component<
     this.newRequest(ITEMS_PER_REQUEST);
   }
 
-  // This is called from loadAmount in a loop until it has the requested amount of cards or runs out of results
-  // Returns the next page number to fetch, or null if at end
-  // TODO: maybe we should rename `loadPage()`, since it's slightly confusing when we have github pages as well
   async loadPage(queue: never[]) {
-    // Store value for comparison later
     const activeTab = this.CONFIG.activeTab;
     switch (activeTab) {
       case "Extensions": {
@@ -277,9 +261,7 @@ class Grid extends React.Component<
             this.CONFIG.visual.hideInstalled
           );
 
-          // I believe this stops the requests when switching tabs?
           if (this.requestQueue.length > 1 && queue !== this.requestQueue[0]) {
-            // Stop this queue from continuing to fetch and append to cards list
             return -1;
           }
 
@@ -302,13 +284,10 @@ class Grid extends React.Component<
         }
         this.setState({ cards: this.cardList });
 
-        // First result is null or -1 so it coerces to 1
         const currentPage = this.requestPage > -1 && this.requestPage ? this.requestPage : 1;
-        // Sets the amount of items that have thus been fetched
         const soFarResults = ITEMS_PER_REQUEST * (currentPage - 1) + pageOfRepos.page_count;
         const remainingResults = pageOfRepos.total_count - soFarResults;
 
-        // If still have more results, return next page number to fetch
         console.debug(`Parsed ${soFarResults}/${pageOfRepos.total_count} extensions`);
         if (remainingResults > 0) return currentPage + 1;
         console.debug("No more extension results");
@@ -316,24 +295,20 @@ class Grid extends React.Component<
       }
       case "Installed": {
         const installedStuff = {
-          theme: getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedThemes, []),
-          extension: getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedExtensions, []),
-          snippet: getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedSnippets, [])
+          theme: getStringArrayFromKey(LOCALSTORAGE_KEYS.installedThemes),
+          extension: getStringArrayFromKey(LOCALSTORAGE_KEYS.installedExtensions),
+          snippet: getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets)
         };
 
         for (const type in installedStuff) {
           if (installedStuff[type].length) {
             const installedOfType: (CardItem | Snippet)[] = [];
             for (const itemKey of installedStuff[type]) {
-              // TODO: err handling
               const installedItem = getLocalStorageDataFromKey(itemKey);
-              // I believe this stops the requests when switching tabs?
               if (this.requestQueue.length > 1 && queue !== this.requestQueue[0]) {
-                // Stop this queue from continuing to fetch and append to cards list
                 return -1;
               }
 
-              // The key can be listed as installed while its data is gone (partial reset, failed write, ...)
               if (!isRenderableCardItem(installedItem)) {
                 console.warn(`Marketplace: dropping unreadable installed item "${itemKey}"`);
                 continue;
@@ -351,9 +326,6 @@ class Grid extends React.Component<
         }
         this.setState({ cards: this.cardList });
         break;
-
-        // Don't need to return a page number because
-        // installed extension do them all in one go, since it's local
       }
       case "Themes": {
         const pageOfRepos = await getTaggedRepos("spicetify-themes", this.requestPage, this.BLACKLIST, this.CONFIG.visual.showArchived);
@@ -361,9 +333,7 @@ class Grid extends React.Component<
         for (const repo of pageOfRepos.items) {
           const repoThemes = await fetchThemeManifest(repo.contents_url, repo.default_branch, repo.stargazers_count);
 
-          // I believe this stops the requests when switching tabs?
           if (this.requestQueue.length > 1 && queue !== this.requestQueue[0]) {
-            // Stop this queue from continuing to fetch and append to cards list
             return -1;
           }
 
@@ -386,9 +356,7 @@ class Grid extends React.Component<
           this.appendCard(theme, "theme", activeTab);
         }
 
-        // First request is null, so coerces to 1
         const currentPage = this.requestPage > -1 && this.requestPage ? this.requestPage : 1;
-        // -1 because the page number is 1-indexed
         const soFarResults = ITEMS_PER_REQUEST * (currentPage - 1) + pageOfRepos.page_count;
         const remainingResults = pageOfRepos.total_count - soFarResults;
 
@@ -403,9 +371,7 @@ class Grid extends React.Component<
 
         for (const repo of pageOfRepos.items) {
           const repoApps = await fetchAppManifest(repo.contents_url, repo.default_branch, repo.stargazers_count);
-          // I believe this stops the requests when switching tabs?
           if (this.requestQueue.length > 1 && queue !== this.requestQueue[0]) {
-            // Stop this queue from continuing to fetch and append to cards list
             return -1;
           }
 
@@ -428,9 +394,7 @@ class Grid extends React.Component<
           this.appendCard(app, "app", activeTab);
         }
 
-        // First request is null, so coerces to 1
         const currentPage = this.requestPage > -1 && this.requestPage ? this.requestPage : 1;
-        // -1 because the page number is 1-indexed
         const soFarResults = ITEMS_PER_REQUEST * (currentPage - 1) + pageOfRepos.page_count;
         const remainingResults = pageOfRepos.total_count - soFarResults;
 
@@ -443,7 +407,6 @@ class Grid extends React.Component<
         const snippets = this.SNIPPETS;
 
         if (this.requestQueue.length > 1 && queue !== this.requestQueue[0]) {
-          // Stop this queue from continuing to fetch and append to cards list
           return -1;
         }
 
@@ -462,11 +425,6 @@ class Grid extends React.Component<
 
     return 0;
   }
-  /**
-   * Load a new set of extensions
-   * @param {any} queue An array of the extensions to be loaded
-   * @param {number} [quantity] Amount of extensions to be loaded per page. (Defaults to ITEMS_PER_REQUEST constant)
-   */
   async loadAmount(queue: never[], quantity: number = ITEMS_PER_REQUEST) {
     this.setState({ rest: false });
     const maxCardQuantity = this.cardList.length + quantity;
@@ -482,28 +440,17 @@ class Grid extends React.Component<
       return;
     }
 
-    // Remove this queue from queue list
     this.requestQueue.shift();
     this.setState({ rest: true });
   }
 
-  /**
-   * Load more items if there are more items to load.
-   * @returns {void}
-   */
   loadMore() {
     if (!this.state.rest || this.endOfList || this.state.loadingAll) return Promise.resolve();
 
-    // loadAmount() shifts the queue when it finishes, so there may not be one left to reuse
     if (!this.requestQueue.length) this.requestQueue.unshift([]);
     return this.loadAmount(this.requestQueue[0], ITEMS_PER_REQUEST);
   }
 
-  /**
-   * Update the colour schemes in the state + dropdown, and inject the active one
-   * @param schemes Object with the colour schemes
-   * @param activeScheme The name of the active colour scheme (a key in the schemes object)
-   */
   updateColourSchemes(schemes: SchemeIni, activeScheme: string | null) {
     console.debug("updateColourSchemes", schemes, activeScheme);
     this.CONFIG.theme.schemes = schemes;
@@ -513,11 +460,9 @@ class Grid extends React.Component<
     if (schemes && activeScheme && schemes[activeScheme]) {
       injectColourScheme(this.CONFIG.theme.schemes[activeScheme]);
     } else {
-      // Reset schemes if none sent
       injectColourScheme(null);
     }
 
-    // Save to localstorage
     const installedThemeKey = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.themeInstalled);
     const installedThemeData = getLocalStorageDataFromKey(installedThemeKey);
     if (installedThemeData) {
@@ -534,13 +479,6 @@ class Grid extends React.Component<
     });
   }
 
-  /**
-   * The componentDidMount() method is called when the component is first loaded.
-   * It checks if the cardList is already loaded. If it is, it checks if the lastScroll value is
-   greater than 0.
-  * If it is, it scrolls to the lastScroll value. If it isn't, it scrolls to the top of the page.
-  * If the cardList isn't loaded, it loads the cardList.
-  */
   async componentDidMount() {
     void this.checkForUpdates();
 
@@ -554,27 +492,20 @@ class Grid extends React.Component<
     if (viewPort) {
       viewPort.addEventListener("scroll", this.checkScroll);
       if (this.cardList.length) {
-        // Already loaded
         if (this.lastScroll > 0) {
           viewPort.scrollTo(0, this.lastScroll);
         }
         return;
       }
     } else {
-      // Infinite scroll is unavailable, but the Load More button still works
       console.warn(`Marketplace: no scroll container matched ${MAIN_VIEW_SCROLL_SELECTORS.join(", ")}`);
     }
 
-    // Load blacklist and snippets
     this.BLACKLIST = await getBlacklist();
     this.SNIPPETS = await fetchCssSnippets(this.CONFIG.visual.hideInstalled);
     this.newRequest(ITEMS_PER_REQUEST);
   }
 
-  /**
-   * When the component is unmounted, remove the scroll event listener.
-   * @returns {void}
-   */
   componentWillUnmount(): void {
     this.gridUpdateTabs = this.gridUpdatePostsVisual = null;
     const viewPort = this.viewPort ?? querySelectorFirst(MAIN_VIEW_SCROLL_SELECTORS);
@@ -606,20 +537,13 @@ class Grid extends React.Component<
     }
   }
 
-  /**
-   * If the user has scrolled to the bottom of the page, load more posts.
-   * @param event - The event object that is passed to the callback function.
-   */
-  // Add scroll event listener with type
   isScrolledBottom(event: Event): void {
-    // Scroll fires far faster than we can act on it, so coalesce to one check per frame
     if (this.scrollFrame !== null) return;
 
     const viewPort = event.target as HTMLElement;
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = null;
       if (viewPort.scrollTop + viewPort.clientHeight >= viewPort.scrollHeight - SCROLL_LOAD_THRESHOLD_PX) {
-        // Near the bottom, load more posts
         void this.loadMore();
       }
     });
@@ -630,7 +554,6 @@ class Grid extends React.Component<
     this.setState({ activeThemeKey: themeKey });
   }
 
-  // TODO: clean this up. It worked when I was using state, but state seems like pointless overhead.
   getActiveScheme() {
     return this.state.activeScheme;
   }
@@ -641,17 +564,16 @@ class Grid extends React.Component<
     const seen = new Set<string>();
     let matches = 0;
 
-    for (const card of this.cardList) {
+    for (const entry of this.cardList) {
+      const card = entry as unknown as React.ReactElement<CardProps> & { key: string | null };
       const group = groups.get(card.props.type);
       if (!group) continue;
       if (!cardMatchesSearch(card.props.item, searchValue)) continue;
 
-      // Filter out duplicates to prevent spamming
       const dedupeKey = `${card.props.type}:${String(card.key)}`;
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
 
-      // Clone the cards and update the prop to trigger re-render
       group.push(React.cloneElement(card, { activeThemeKey, key: card.key }));
       matches++;
     }
@@ -685,7 +607,6 @@ class Grid extends React.Component<
                 &nbsp;{this.state.version}
               </button>
             ) : null}
-            {/* Generate a new box for sorting options */}
             <h2 className="marketplace-header__label">{t("grid.sort.label")}</h2>
             <SortBox
               onChange={(value) => this.updateSort(value)}
@@ -694,7 +615,6 @@ class Grid extends React.Component<
             />
           </div>
           <div className="marketplace-header__right">
-            {/* Show theme developer tools button if themeDevTools is enabled */}
             {this.CONFIG.visual.themeDevTools ? (
               <Tooltip label={t("devTools.title")} renderInline={true} placement="bottom">
                 <button
@@ -707,14 +627,10 @@ class Grid extends React.Component<
                 </button>
               </Tooltip>
             ) : null}
-            {/* Show colour scheme dropdown if there is a theme with schemes installed */}
             {this.state.activeScheme ? (
               <SortBox
                 onChange={(value) => this.updateColourSchemes(this.state.schemes, value)}
-                // TODO: Make this compatible with the changes to the theme install process: need to create a method to update the scheme options without a full reload.
                 sortBoxOptions={generateSchemesOptions(this.state.schemes)}
-                // It doesn't work when I directly use CONFIG.theme.activeScheme in the sortBySelectedFn
-                // because it hardcodes the value into the fn
                 sortBySelectedFn={(a) => a.key === this.getActiveScheme()}
               />
             ) : null}
@@ -738,22 +654,18 @@ class Grid extends React.Component<
             </Tooltip>
           </div>
         </div>
-        {/* Add a header and grid for each card type if it has any cards */}
         {CARD_TYPES.map((cardType) => {
           const cardsOfType = groups.get(cardType.handle) ?? [];
 
           if (cardsOfType.length) {
             return (
-              // Add a header for the card type
               <ErrorBoundary key={cardType.handle} context={`Grid/${cardType.handle}`} compact={true}>
                 <div className="marketplace-content">
-                  {/* Add a header for the card type */}
                   <h2 className="marketplace-card-type-heading">{t(`tabs.${cardType.name}`)}</h2>
-                  {/* Add the grid and cards */}
                   <div
                     className="marketplace-grid main-gridContainer-gridContainer main-gridContainer-fixedWidth"
                     data-tab={this.CONFIG.activeTab}
-                    data-card-type={t(`tabs.${cardType.name}`)} // This is used for the "no installed x" in css
+                    data-card-type={t(`tabs.${cardType.name}`)}
                   >
                     {cardsOfType}
                   </div>
@@ -763,7 +675,6 @@ class Grid extends React.Component<
           }
           return null;
         })}
-        {/* Nothing matched the search, so explain why instead of showing a blank page */}
         {isSearching && matches === 0 && loadedCount > 0 ? (
           <div className="marketplace-empty">
             <h3 className="marketplace-empty__title">{t("grid.noResults", { query: searchInput.trim() })}</h3>
@@ -775,7 +686,6 @@ class Grid extends React.Component<
             </div>
           </div>
         ) : null}
-        {/* Add snippets button if on snippets tab */}
         {this.CONFIG.activeTab === "Snippets" ? (
           <Button classes={["marketplace-add-snippet-btn"]} onClick={() => openModal("ADD_SNIPPET")}>
             + {t("grid.addCSS")}

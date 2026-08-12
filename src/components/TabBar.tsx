@@ -4,7 +4,6 @@ import { withTranslation } from "react-i18next";
 import { attachAndKeepMounted, TOP_BAR_SELECTORS } from "../logic/Dom";
 import type { TabItemConfig } from "../types/marketplace-types";
 
-// NOTE: The label and value are the same (e.g. "Extensions")
 type TabOptionConfig = Option & {
   active: boolean;
   enabled: boolean;
@@ -13,7 +12,6 @@ type TabOptionConfig = Option & {
 class TabBarItem extends React.Component<{
   item: TabOptionConfig;
   switchTo: (option: Option) => void;
-  // TODO: there's probably a better way to make TS not complain about the withTranslation HOC
   t: (key: string) => string;
 }> {
   render() {
@@ -63,7 +61,6 @@ export const TopBarContent = (props: { links: TabItemConfig[]; activeLink: strin
     const node = tabBar.current;
     if (!node) return;
 
-    // Move the marketplace-tabBar item into Spotify's top bar, and put it back if Spotify re-renders it away
     const detach = attachAndKeepMounted(node, TOP_BAR_SELECTORS, {
       onMissing: () => {
         console.warn(`Marketplace: no top bar matched ${TOP_BAR_SELECTORS.join(", ")}; leaving the tab bar inline`);
@@ -90,7 +87,6 @@ const TabBar = React.forwardRef(({ links, activeLink, switchCallback }: TabBarPr
   const [availableSpace, setAvailableSpace] = useState(0);
   const [droplistItem, setDroplistItems] = useState([0]);
 
-  // Key is the tab name, value is also the tab name, active is if it's active
   const options = links.map(({ name, enabled }) => {
     const active = name === activeLink;
     return { label: name, value: name, active, enabled } as TabOptionConfig;
@@ -120,19 +116,13 @@ const TabBar = React.forwardRef(({ links, activeLink, switchCallback }: TabBarPr
 
     const totalSize = childrenSizes.reduce((a, b) => a + b, 0);
 
-    // Can we render everything?
     if (totalSize <= availableSpace) {
       setDroplistItems([]);
       return;
     }
 
-    // The `More` button can be set to _any_ of the children. So we
-    // reserve space for the largest item instead of always taking
-    // the last item.
     const viewMoreButtonSize = Math.max(...childrenSizes);
 
-    // Figure out how many children we can render while also showing
-    // the More button
     const itemsToHide = [] as number[];
     let stopWidth = viewMoreButtonSize;
 

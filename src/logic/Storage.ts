@@ -172,7 +172,6 @@ export const marketplaceStorage = {
     await trackWrite(removePersistedItem(key));
   },
 
-  // Reloading Spotify drops the in-memory cache, so pending IndexedDB writes must land first
   async flush() {
     for (let round = 0; round < MAX_FLUSH_ROUNDS && pendingWrites.size; round++) {
       await Promise.allSettled([...pendingWrites]);

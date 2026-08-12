@@ -7,7 +7,7 @@ import "prismjs/components/prism-css";
 import { LOCALSTORAGE_KEYS } from "../../../constants";
 import type { ModalType } from "../../../logic/LaunchModals";
 import { marketplaceStorage } from "../../../logic/Storage";
-import { fileToBase64, getLocalStorageDataFromKey, initializeSnippets } from "../../../logic/Utils";
+import { fileToBase64, getLocalStorageDataFromKey, getStringArrayFromKey, initializeSnippets } from "../../../logic/Utils";
 import Button from "../../Button";
 import type { CardProps } from "../../Card/Card";
 
@@ -18,32 +18,32 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
   const [description, setDescription] = React.useState(props.type === "ADD_SNIPPET" ? "" : props.content?.item.description || "");
   const [imageURL, setimageURL] = React.useState(props.type === "ADD_SNIPPET" ? "" : props.content?.item.imageURL || "");
 
-  const processName = () => name.replace(/\n/g, "").replaceAll(" ", "-");
+  const processSnippetName = (value: string) => value.replace(/\n/g, "").replaceAll(" ", "-");
+  const processName = () => processSnippetName(name);
   const processCode = () => code.replace(/\n/g, "\\n");
 
   const localStorageKey = `marketplace:installed:snippet:${processName()}`;
-  const [isInstalled, setInstalled] = React.useState(!!getLocalStorageDataFromKey(localStorageKey));
+  const isInstalled = () => !!getLocalStorageDataFromKey(localStorageKey);
+  const [installedLabel, setInstalledLabel] = React.useState(isInstalled());
 
   const saveSnippet = async () => {
-    // const processedCode = processCode();
     const processedName = processName();
     const processedDescription = description.trim();
 
-    if (isInstalled && props.type !== "EDIT_SNIPPET") {
+    if (isInstalled() && props.type !== "EDIT_SNIPPET") {
       Spicetify.showNotification(t("snippets.duplicateName"), true);
       return;
     }
 
     console.debug(`Installing snippet: ${processedName}`);
-    if (props.content && props.content.item.title !== processedName) {
-      // Remove from installed list
-      console.debug(`Deleting outdated snippet: ${props.content.item.title}`);
+    const previousName = props.content ? processSnippetName(props.content.item.title || "") : "";
+    if (previousName && previousName !== processedName) {
+      console.debug(`Deleting outdated snippet: ${previousName}`);
 
-      await marketplaceStorage.removeItemAsync(`marketplace:installed:snippet:${props.content.item.title}`);
-      const installedSnippetKeys = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedSnippets, []);
-      const remainingInstalledSnippetKeys = installedSnippetKeys.filter(
-        (key: string) => key !== `marketplace:installed:snippet:${props.content?.item.title}`
-      );
+      const previousKey = `marketplace:installed:snippet:${previousName}`;
+      await marketplaceStorage.removeItemAsync(previousKey);
+      const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
+      const remainingInstalledSnippetKeys = installedSnippetKeys.filter((key: string) => key !== previousKey);
       await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(remainingInstalledSnippetKeys));
     }
 
@@ -58,22 +58,21 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
       })
     );
 
-    // Add to installed list if not there already
-    const installedSnippetKeys = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedSnippets, []);
+    const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
     if (installedSnippetKeys.indexOf(localStorageKey) === -1) {
       installedSnippetKeys.push(localStorageKey);
       await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(installedSnippetKeys));
     }
-    const installedSnippets = installedSnippetKeys.map((key: string) => getLocalStorageDataFromKey(key));
+    const installedSnippets = installedSnippetKeys.map((key: string) => getLocalStorageDataFromKey(key)).filter(Boolean);
     initializeSnippets(installedSnippets);
 
     Spicetify.PopupModal.hide();
     if (props.type === "EDIT_SNIPPET") location.reload();
   };
 
-  let inputElement: HTMLInputElement;
+  const inputElement = React.useRef<HTMLInputElement>(null);
   const FileInputClick = () => {
-    inputElement.click();
+    inputElement.current?.click();
   };
 
   return (
@@ -89,12 +88,7 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
             textareaClassName="snippet-code-editor"
             readOnly={props.type === "VIEW_SNIPPET"}
             placeholder={t("snippets.customCSSPlaceholder")}
-            style={
-              {
-                // fontFamily: "'Fira code', 'Fira Mono', monospace'",
-                // fontSize: 12,
-              }
-            }
+            style={{}}
           />
         </div>
       </div>
@@ -133,7 +127,6 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
         )}
       </div>
       {props.type !== "VIEW_SNIPPET" && (
-        // Don't display buttons on "View Snippet" modal
         <>
           <Button onClick={FileInputClick}>
             {imageURL.length ? t("snippets.changeImage") : t("snippets.addImage")}
@@ -141,14 +134,12 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
               id={PREVIEW_IMAGE_ID}
               type="file"
               style={{ display: "none" }}
-              // biome-ignore lint/suspicious/noAssignInExpressions: TODO: fix this
-              ref={(input: HTMLInputElement) => (inputElement = input)}
+              ref={inputElement}
               onChange={async (event) => {
                 if (event.target.files?.[0]) {
                   try {
                     const b64 = await fileToBase64(event.target.files?.[0]);
                     if (b64) {
-                      // console.debug(b64);
                       setimageURL(b64 as string);
                     }
                   } catch (err) {
@@ -158,7 +149,6 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
               }}
             />
           </Button>
-          {/* Disable the save button if the name or code are empty */}
           <Button onClick={saveSnippet} disabled={!processName() || !processCode()}>
             {t("snippets.saveCSS")}
           </Button>
@@ -168,10 +158,10 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
         <Button
           onClick={() => {
             props.callback?.();
-            setInstalled(!isInstalled);
+            setInstalledLabel(!installedLabel);
           }}
         >
-          {isInstalled ? t("remove") : t("install")}
+          {installedLabel ? t("remove") : t("install")}
         </Button>
       )}
     </div>

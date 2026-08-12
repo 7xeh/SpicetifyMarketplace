@@ -72,7 +72,6 @@ const ThemeDevToolsModal = () => {
         <Button onClick={() => void saveColorIni(code)}>{t("save")}</Button>
       </div>
 
-      {/* Create a box containing the invalid css classnames fetched from "getInvalidCSS()"*/}
       <div className="devtools-column">
         <h2 className="devtools-heading">{t("devTools.invalidCSS")}</h2>
 

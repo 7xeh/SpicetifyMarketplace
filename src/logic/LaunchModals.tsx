@@ -46,7 +46,6 @@ const getModalSettings = (
     case "SETTINGS":
       return {
         title: t("settings.title"),
-        // TODO: If I just use {CONFIG}, it nests it inside another object...
         content: <SettingsModal CONFIG={CONFIG as Config} updateAppConfig={updateAppConfig as (CONFIG: Config) => void} />,
         isLarge: true
       };
@@ -87,7 +86,7 @@ export const openModal = (
 ) => {
   const triggerModal = () => {
     const modalSettings = getModalSettings(modal, CONFIG, updateAppConfig, props, callback);
-    Spicetify.PopupModal.display(modalSettings);
+    Spicetify.PopupModal.display(modalSettings as unknown as Parameters<typeof Spicetify.PopupModal.display>[0]);
   };
 
   triggerModal();

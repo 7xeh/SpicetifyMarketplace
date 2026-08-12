@@ -10,9 +10,6 @@ import TrashIcon from "./Icons/TrashIcon";
 
 class ReadmePage extends React.Component<
   {
-    // props
-    // TODO: decide what data we want to pass in and how we want to store it
-    // (this currently comes from Card.openReadme)
     data: {
       title: string;
       user: string;
@@ -25,19 +22,21 @@ class ReadmePage extends React.Component<
       isInstalled: () => boolean;
     };
     title: string;
-    // TODO: there's probably a better way to make TS not complain about the withTranslation HOC
     t: (key: string) => string;
   },
   {
     isInstalled: boolean;
-    // state
     html: string;
+    loading: boolean;
   }
 > {
   state = {
     isInstalled: this.props.data.isInstalled(),
-    html: `<p>${this.props.t("readmePage.loading")}</p>`
+    html: "",
+    loading: true
   };
+
+  scrollbarInterval: ReturnType<typeof setInterval> | null = null;
 
   getReadmeHTML = async () => {
     return fetch(this.props.data.readmeURL)
@@ -58,33 +57,32 @@ class ReadmePage extends React.Component<
   };
 
   componentDidMount() {
-    // Get and set readme html once loaded
     this.getReadmeHTML().then((html) => {
       if (html === null || html === undefined) return;
-      this.setState({ html });
+      this.setState({ html, loading: false });
     });
   }
 
+  componentWillUnmount() {
+    if (this.scrollbarInterval !== null) clearInterval(this.scrollbarInterval);
+    this.scrollbarInterval = null;
+  }
+
   componentDidUpdate() {
-    // Make the page scrollable
     const main = document.querySelector("#marketplace-readme")?.closest("main");
-    if (main) {
-      const callScrollbar = setInterval(() => {
+    if (main && this.scrollbarInterval === null) {
+      this.scrollbarInterval = setInterval(() => {
         if (!document.querySelector("#marketplace-readme")) {
-          clearInterval(callScrollbar);
+          if (this.scrollbarInterval !== null) clearInterval(this.scrollbarInterval);
+          this.scrollbarInterval = null;
           main.style.removeProperty("overflow-y");
           return;
         }
-        // TODO: see if it's possible to use some load event or mutation observer to do this
         main.style.overflowY = "visible";
         main.style.overflowY = "auto";
       }, 1000);
     }
 
-    // Add error handler in attempt to fix broken image urls
-    // e.g. "screenshot.png" loads https://xpui.app.spotify.com/screenshot.png and breaks
-    // so I turn it into https://raw.githubusercontent.com/theRealPadster/spicetify-hide-podcasts/main/screenshot.png
-    // This works for urls relative to the repo readme
     for (const img of Array.from(document.querySelectorAll("#marketplace-readme img"))) {
       img.addEventListener(
         "error",
@@ -122,7 +120,13 @@ class ReadmePage extends React.Component<
   }
 
   render() {
-    const expFeatures = JSON.parse(localStorage.getItem("spicetify-exp-features") || "{}");
+    let expFeatures: Record<string, { value?: string }> = {};
+    try {
+      expFeatures = JSON.parse(localStorage.getItem("spicetify-exp-features") || "{}") || {};
+    } catch (error) {
+      console.warn("Marketplace: could not read spicetify-exp-features", error);
+    }
+
     const isGlobalNav = expFeatures.enableGlobalNavBar?.value !== "control" && true;
 
     const tabBarMargin = {
@@ -149,7 +153,7 @@ class ReadmePage extends React.Component<
             </Button>
           </div>
         </div>
-        {this.state.html === "<p>Loading...</p>" ? (
+        {this.state.loading ? (
           <footer className="marketplace-footer">
             <LoadingIcon />
           </footer>

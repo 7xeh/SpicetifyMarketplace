@@ -27,9 +27,7 @@ const ConfigRow = (props: {
     console.debug(`toggling ${storageKey} to ${state}`);
     marketplaceStorage.setItem(`marketplace:${storageKey}`, String(state));
 
-    // Saves the config settings to app as well as SettingsModal state
     props.updateConfig(props.modalConfig);
-    // gridUpdatePostsVisual && gridUpdatePostsVisual();
   };
   const settingsDropdownChange = (value) => {
     const state = value;

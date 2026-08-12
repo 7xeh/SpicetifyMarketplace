@@ -82,6 +82,10 @@ This removes the custom app and its entries in the Spicetify configuration. If `
 
 Issues and pull requests are welcome. If a problem also affects upstream v2, reporting it there as well is encouraged. The intent of this fork is to keep v2 working, not to fragment the ecosystem or divert effort from v3.
 
+[docs/INTERNALS.md](docs/INTERNALS.md) documents how the project fits together — architecture, the
+non-obvious workarounds, storage layout, security invariants, and the outstanding TODOs. Read it
+before changing anything that looks arbitrary.
+
 Development setup, publishing, and localization are unchanged from upstream:
 
 - [Overview](https://github.com/spicetify/marketplace/wiki)

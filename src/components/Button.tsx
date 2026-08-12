@@ -2,8 +2,6 @@ import React from "react";
 
 import styles from "../styles/modules/button.module.scss";
 
-// Round is the default style
-// Circle is used by the install/remove button
 type ButtonType = "round" | "circle";
 
 const Button = (props: {

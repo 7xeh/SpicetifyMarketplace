@@ -3,9 +3,19 @@ import React, { type Key } from "react";
 import { withTranslation } from "react-i18next";
 
 import { CUSTOM_APP_PATH, LOCALSTORAGE_KEYS, SNIPPETS_PAGE_URL } from "../../constants";
+import { fetchGitHubJson } from "../../logic/GitHubApi";
 import { openModal } from "../../logic/LaunchModals";
+import { CACHE_TTL } from "../../logic/RequestCache";
 import { marketplaceStorage } from "../../logic/Storage";
-import { generateKey, getLocalStorageDataFromKey, initializeSnippets, injectUserCSS, parseCSS, parseIni } from "../../logic/Utils";
+import {
+  generateKey,
+  getLocalStorageDataFromKey,
+  getStringArrayFromKey,
+  initializeSnippets,
+  injectUserCSS,
+  parseCSS,
+  parseIni
+} from "../../logic/Utils";
 import type { CardItem, CardType, Config, SchemeIni, Snippet, VisualConfig } from "../../types/marketplace-types";
 import Button from "../Button";
 import DownloadIcon from "../Icons/DownloadIcon";
@@ -18,10 +28,8 @@ import TagsDiv from "./TagsDiv";
 const Spicetify = window.Spicetify;
 
 export type CardProps = {
-  // From `fetchExtensionManifest()`, `fetchThemeManifest()`, and snippets.json
   item: CardItem | Snippet;
   CONFIG: Config;
-  // From `appendCard()`
   updateColourSchemes: (SchemeIni, string) => void;
   updateActiveTheme: (string) => void;
   type: CardType;
@@ -33,7 +41,6 @@ export class Card extends React.Component<
   CardProps,
   {
     installed: boolean;
-    // TODO: Can I remove `stars` from `this`? Or maybe just put everything in `state`?
     stars: number;
     tagsExpanded: boolean;
     externalUrl: string;
@@ -41,16 +48,8 @@ export class Card extends React.Component<
     created: string | undefined;
   }
 > {
-  // Theme stuff
-  // cssURL?: string;
-  // schemesURL?: string;
-  // include?: string[];
-  // // Snippet stuff
-  // code?: string;
-  // description?: string;
   tags: string[];
 
-  // Added locally
   menuType: typeof Spicetify.ReactComponent.Menu;
   localStorageKey: string;
   key: Key | null = null;
@@ -59,70 +58,79 @@ export class Card extends React.Component<
   constructor(props: CardProps) {
     super(props);
 
-    // Added locally
-    // this.menuType = Spicetify.ReactComponent.Menu | "div";
     this.menuType = Spicetify.ReactComponent.Menu;
 
     this.localStorageKey = generateKey(props);
 
     Object.assign(this, props);
 
-    // Needs to be after Object.assign so an undefined 'tags' field doesn't overwrite the default []
-    // Copied, because pushing onto props.item.tags would mutate the shared item and duplicate tags on re-render
     this.tags = Array.isArray(props.item.tags) ? [...props.item.tags] : [];
     if (props.item.include?.length) this.tags.push(t("grid.externalJS"));
     if (props.item.archived) this.tags.push(t("grid.archived"));
 
     this.state = {
-      // Initial value. Used to trigger a re-render.
-      // isInstalled() is used for all other intents and purposes
       installed: marketplaceStorage.getItem(this.localStorageKey) !== null,
 
-      // TODO: Can I remove `stars` from `this`? Or maybe just put everything in `state`?
       stars: this.props.item.stars || 0,
       tagsExpanded: false,
-      externalUrl:
-        this.props.item.user && this.props.item.repo // These won't exist for snippets
-          ? `https://github.com/${this.props.item.user}/${this.props.item.repo}`
-          : "",
+      externalUrl: this.props.item.user && this.props.item.repo ? `https://github.com/${this.props.item.user}/${this.props.item.repo}` : "",
       lastUpdated: this.props.item.user && this.props.item.repo ? this.props.item.lastUpdated : undefined,
       created: this.props.item.user && this.props.item.repo ? this.props.item.created : undefined
     };
   }
 
-  // Using this because it gets the live value ('installed' is stuck after a re-render)
   isInstalled() {
     return marketplaceStorage.getItem(this.localStorageKey) !== null;
   }
 
-  async componentDidMount() {
-    // Refresh stars if on "Installed" tab with stars enabled
-    if (this.props.CONFIG.activeTab === "Installed" && this.props.type !== "snippet") {
-      // https://docs.github.com/en/rest/reference/repos#get-a-repository
-      const url = `https://api.github.com/repos/${this.props.item.user}/${this.props.item.repo}`;
-      // TODO: This implementation could probably be improved.
-      // It might have issues when quickly switching between tabs.
-      const repoData = await fetch(url).then((res) => res.json());
-      const { stargazers_count, pushed_at } = repoData;
+  mounted = false;
 
-      const stateUpdate = { stars: 0, lastUpdated: undefined };
-      if (this.state.stars !== stargazers_count && this.props.CONFIG.visual.stars) {
-        stateUpdate.stars = stargazers_count;
-        console.debug(`Stars updated to: ${stargazers_count}`);
-      }
-      if (this.state.lastUpdated !== pushed_at) {
-        stateUpdate.lastUpdated = pushed_at;
-        console.debug(`New update pushed at: ${pushed_at}`);
-        switch (this.props.type) {
-          case "extension":
-            await this.installExtension();
-            break;
-          case "theme":
-            await this.installTheme(true);
-            break;
-        }
-      }
+  async componentDidMount() {
+    this.mounted = true;
+
+    if (this.props.CONFIG.activeTab !== "Installed" || this.props.type === "snippet") return;
+
+    const { user, repo } = this.props.item;
+    if (!user || !repo) return;
+
+    const url = `https://api.github.com/repos/${user}/${repo}`;
+    const { data } = await fetchGitHubJson<{ stargazers_count?: number; pushed_at?: string }>(url, {
+      cacheKey: `repo:${user}/${repo}`,
+      ttlMs: CACHE_TTL.repo,
+      notifyOnRateLimit: false
+    });
+
+    if (!data || !this.mounted) return;
+
+    const { stargazers_count, pushed_at } = data;
+
+    const nextStars = typeof stargazers_count === "number" && this.props.CONFIG.visual.stars ? stargazers_count : this.state.stars;
+    const nextUpdated = typeof pushed_at === "string" ? pushed_at : this.state.lastUpdated;
+    const hasNewUpdate = typeof pushed_at === "string" && this.state.lastUpdated !== pushed_at;
+
+    if (nextStars !== this.state.stars || nextUpdated !== this.state.lastUpdated) {
+      console.debug(`Refreshed ${user}/${repo}: ★ ${nextStars}, pushed at ${nextUpdated}`);
+      this.setState({ stars: nextStars, lastUpdated: nextUpdated });
     }
+
+    if (!hasNewUpdate) return;
+
+    try {
+      switch (this.props.type) {
+        case "extension":
+          await this.installExtension();
+          break;
+        case "theme":
+          await this.installTheme(true);
+          break;
+      }
+    } catch (error) {
+      console.error(`Marketplace: could not update ${this.localStorageKey}`, error);
+    }
+  }
+
+  componentWillUnmount() {
+    this.mounted = false;
   }
 
   async buttonClicked() {
@@ -143,20 +151,17 @@ export class Card extends React.Component<
         await this.removeTheme(this.localStorageKey);
       } else {
         const localTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.localTheme);
-        if (localTheme !== null && localTheme.toLowerCase() !== "marketplace") {
+        if (localTheme && localTheme.toLowerCase() !== "marketplace") {
           Spicetify.showNotification(t("notifications.wrongLocalTheme"), true, 5000);
           return;
         }
 
-        // Remove theme if already installed, then install the new theme
         await this.removeTheme();
         await this.installTheme();
       }
 
-      // If the new or previous theme has JS, prompt to reload
       if (this.props.item.manifest?.include?.length || previousTheme.include?.length) openModal("RELOAD");
     } else if (this.props.type === "app") {
-      // Open repo in new tab
       window.open(this.state.externalUrl, "_blank");
     } else if (this.props.type === "snippet") {
       if (this.isInstalled()) {
@@ -172,8 +177,6 @@ export class Card extends React.Component<
 
   async installExtension() {
     console.debug(`Installing extension ${this.localStorageKey}`);
-    // Add to localstorage (this stores a copy of all the card props in the localstorage)
-    // TODO: can I clean this up so it's less repetition?
     if (!this.props.item) {
       Spicetify.showNotification(t("notifications.extensionInstallationError"), true);
       return;
@@ -199,8 +202,7 @@ export class Card extends React.Component<
       })
     );
 
-    // Add to installed list if not there already
-    const installedExtensions = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedExtensions, []);
+    const installedExtensions = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedExtensions);
     if (installedExtensions.indexOf(this.localStorageKey) === -1) {
       installedExtensions.push(this.localStorageKey);
       await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(installedExtensions));
@@ -215,12 +217,10 @@ export class Card extends React.Component<
     if (extValue) {
       console.debug(`Removing extension ${this.localStorageKey}`);
 
-      // Remove from installed list first, so a lost write can never leave a dangling entry
-      const installedExtensions = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedExtensions, []);
+      const installedExtensions = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedExtensions);
       const remainingInstalledExtensions = installedExtensions.filter((key) => key !== this.localStorageKey);
       await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(remainingInstalledExtensions));
 
-      // Remove from localstorage
       await marketplaceStorage.removeItemAsync(this.localStorageKey);
 
       console.debug("Removed");
@@ -240,21 +240,22 @@ export class Card extends React.Component<
     let currentScheme: string | null = null;
 
     if (update) {
-      // Preserve color schemes from localstorage
-      const { schemes, activeScheme } = getLocalStorageDataFromKey(this.localStorageKey, {});
-      parsedSchemes = schemes;
-      currentScheme = activeScheme;
+      const { schemes, activeScheme } = getLocalStorageDataFromKey(this.localStorageKey, {}) || {};
+      parsedSchemes = schemes && typeof schemes === "object" ? schemes : {};
+      currentScheme = typeof activeScheme === "string" ? activeScheme : null;
     } else if (item.schemesURL) {
-      const schemesResponse = await fetch(item.schemesURL);
-      const colourSchemes = await schemesResponse.text();
-      parsedSchemes = parseIni(colourSchemes);
+      try {
+        const schemesResponse = await fetch(item.schemesURL);
+        if (!schemesResponse.ok) throw new Error(`HTTP ${schemesResponse.status}`);
+        const colourSchemes = await schemesResponse.text();
+        parsedSchemes = parseIni(colourSchemes);
+      } catch (error) {
+        console.warn(`Marketplace: could not load colour schemes from ${item.schemesURL}`, error);
+      }
     }
 
     const activeScheme = currentScheme || Object.keys(parsedSchemes)[0] || null;
     console.debug(parsedSchemes, activeScheme);
-
-    // Add to localstorage (this stores a copy of all the card props in the localstorage)
-    // TODO: refactor/clean this up
 
     const {
       manifest,
@@ -290,11 +291,9 @@ export class Card extends React.Component<
         readmeURL,
         stars: this.state.stars,
         tags: this.tags,
-        // Theme stuff
         cssURL,
         schemesURL,
         include,
-        // Installed theme localstorage item has schemes, nothing else does
         schemes: parsedSchemes,
         activeScheme,
         lastUpdated,
@@ -302,32 +301,21 @@ export class Card extends React.Component<
       })
     );
 
-    // TODO: handle this differently?
-
-    // Add to installed list if not there already
-    const installedThemes = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedThemes, []);
+    const installedThemes = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedThemes);
     if (installedThemes.indexOf(this.localStorageKey) === -1) {
       installedThemes.push(this.localStorageKey);
       await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(installedThemes));
 
-      // const usercssURL = `https://raw.github.com/${this.user}/${this.repo}/${this.branch}/${this.manifest.usercss}`;
       await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.themeInstalled, this.localStorageKey);
     }
 
     console.debug("Installed");
 
-    // TODO: We'll also need to actually update the usercss etc, not just the colour scheme
-    // e.g. the stuff from extension.js, like injectUserCSS() etc.
-
     if (!item.include) {
-      // Add new theme css
       this.fetchAndInjectUserCSS(this.localStorageKey);
-      // Update the active theme in Grid state, triggers state change and re-render
       this.props.updateActiveTheme(this.localStorageKey);
-      // Update schemes in Grid, triggers state change and re-render
       this.props.updateColourSchemes(parsedSchemes, activeScheme as string);
 
-      // Add to Spicetify.Config
       const name = this.props.item.manifest?.name;
       // @ts-expect-error: Cannot assign to 'current_theme' because it is a read-only property
       if (name) Spicetify.Config.current_theme = name;
@@ -339,7 +327,6 @@ export class Card extends React.Component<
   }
 
   async removeTheme(defaultThemeKey?: string | null) {
-    // If don't specify theme, remove the currently installed theme
     const themeKey = defaultThemeKey || marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
 
     const themeValue = themeKey && marketplaceStorage.getItem(themeKey);
@@ -347,27 +334,20 @@ export class Card extends React.Component<
     if (themeKey && themeValue) {
       console.debug(`Removing theme ${themeKey}`);
 
-      // Remove from installed list first, so a lost write can never leave a dangling entry
-      const installedThemes = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedThemes, []);
+      const installedThemes = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedThemes);
       const remainingInstalledThemes = installedThemes.filter((key) => key !== themeKey);
       await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(remainingInstalledThemes));
 
-      // Remove record of installed theme
       await marketplaceStorage.removeItemAsync(LOCALSTORAGE_KEYS.themeInstalled);
 
-      // Remove from localstorage
       await marketplaceStorage.removeItemAsync(themeKey);
 
       console.debug("Removed");
 
-      // Removes the current theme CSS
       this.fetchAndInjectUserCSS(null);
-      // Update the active theme in Grid state
       this.props.updateActiveTheme(null);
-      // Removes the current colour scheme
       this.props.updateColourSchemes(null, null);
 
-      // Restore Spicetify.Config
       // @ts-expect-error: Cannot assign to 'current_theme' because it is a read-only property
       Spicetify.Config.current_theme = "marketplace";
       // @ts-expect-error: Cannot assign to 'color_scheme' because it is a read-only property
@@ -389,8 +369,7 @@ export class Card extends React.Component<
       })
     );
 
-    // Add to installed list if not there already
-    const installedSnippetKeys = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedSnippets, []);
+    const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
     if (installedSnippetKeys.indexOf(this.localStorageKey) === -1) {
       installedSnippetKeys.push(this.localStorageKey);
       await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(installedSnippetKeys));
@@ -402,8 +381,7 @@ export class Card extends React.Component<
   }
 
   async removeSnippet() {
-    // Remove from installed list first, so a lost write can never leave a dangling entry
-    const installedSnippetKeys = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedSnippets, []);
+    const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
     const remainingInstalledSnippetKeys = installedSnippetKeys.filter((key) => key !== this.localStorageKey);
     await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(remainingInstalledSnippetKeys));
 
@@ -414,10 +392,6 @@ export class Card extends React.Component<
     this.setState({ installed: false });
   }
 
-  /**
-   * Update the user.css in the DOM
-   * @param {string | null} theme The theme localStorageKey or null, if we want to reset the theme
-   */
   async fetchAndInjectUserCSS(theme) {
     try {
       const tld = window.sessionStorage.getItem("marketplace-request-tld") || undefined;
@@ -451,11 +425,8 @@ export class Card extends React.Component<
   }
 
   render() {
-    // Cache this for performance
     const IS_INSTALLED = this.isInstalled();
-    // console.log(`Rendering ${this.localStorageKey} - is ${IS_INSTALLED ? "" : "not"} installed`);
 
-    // Kill the card if it has been uninstalled on the "Installed" tab
     if (this.props.CONFIG.activeTab === "Installed" && !IS_INSTALLED) {
       console.debug("Card item not installed");
       return null;
@@ -465,7 +436,6 @@ export class Card extends React.Component<
     if (IS_INSTALLED) cardClasses.push("marketplace-card--installed");
 
     const detail: string[] = [];
-    // this.visual.type && detail.push(this.type);
     if (this.props.type !== "snippet" && this.props.visual.stars) {
       detail.push(`★ ${this.state.stars}`);
     }
@@ -476,10 +446,7 @@ export class Card extends React.Component<
         className={cardClasses.join(" ")}
         onClick={() => {
           if (this.props.type === "snippet") {
-            const processedName = this.props.item.title.replace(/\n/g, "");
-
-            if (getLocalStorageDataFromKey(`marketplace:installed:snippet:${processedName}`)?.custom)
-              return openModal("EDIT_SNIPPET", undefined, undefined, this.props);
+            if (getLocalStorageDataFromKey(this.localStorageKey)?.custom) return openModal("EDIT_SNIPPET", undefined, undefined, this.props);
 
             openModal("VIEW_SNIPPET", undefined, undefined, this.props, this.buttonClicked.bind(this));
           } else this.openReadme();
@@ -497,14 +464,11 @@ export class Card extends React.Component<
                   src={this.props.item.imageURL}
                   className="main-image-image main-cardImage-image"
                   onError={(e) => {
-                    // Set to transparent PNG to remove the placeholder icon
-                    // https://png-pixel.com
                     e.currentTarget.setAttribute(
                       "src",
                       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII"
                     );
 
-                    // Add class for styling
                     e.currentTarget.closest(".main-cardImage-imageWrapper")?.classList.add("main-cardImage-imageWrapper--error");
                   }}
                 />
@@ -525,7 +489,6 @@ export class Card extends React.Component<
               <div className="main-cardHeader-text main-type-balladBold">{this.props.item.title}</div>
             </a>
             <div className="main-cardSubHeader-root main-type-mestoBold marketplace-cardSubHeader">
-              {/* Add authors if they exist */}
               {this.props.item.authors && <AuthorsDiv authors={this.props.item.authors} />}
               <span>{detail.join(" ‒ ")}</span>
             </div>
@@ -553,16 +516,12 @@ export class Card extends React.Component<
                 <Button
                   classes={["marketplace-installButton"]}
                   type="circle"
-                  // If it is installed, it will remove it when button is clicked, if not it will save
-                  // TODO: Refactor this using lookups or sth similar
                   label={this.props.type === "app" ? t("github") : IS_INSTALLED ? t("remove") : t("install")}
                   onClick={(e) => {
                     e.stopPropagation();
                     void this.buttonClicked();
                   }}
                 >
-                  {/*If the extension, theme, or snippet is already installed, it will display trash, otherwise it displays download*/}
-                  {/* TODO: Refactor this using lookups or sth similar */}
                   {this.props.type === "app" ? <GitHubIcon /> : IS_INSTALLED ? <TrashIcon /> : <DownloadIcon />}
                 </Button>
               </div>

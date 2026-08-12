@@ -15,33 +15,25 @@ interface Props {
 }
 
 const SettingsModal = ({ CONFIG, updateAppConfig }: Props) => {
-  // Basically takes in the app's CONFIG and create the initial state,
-  // and copies it into the SettingsModal state
-  // then when updating anything in the main state, also updates the SettingsModal state
-
   const [modalConfig, setModalConfig] = React.useState({ ...CONFIG });
   const [versionButtonText, setVersionButtonText] = React.useState(t("settings.versionBtn"));
-  // TODO: use React.useCallback?
   const updateConfig = (CONFIG: Config) => {
     updateAppConfig({ ...CONFIG });
     setModalConfig({ ...CONFIG });
   };
 
-  /** Copy Marketplace version to clipboard and update button text */
   const copyVersion = () => {
     Spicetify.Platform.ClipboardAPI.copy(MARKETPLACE_VERSION);
     setVersionButtonText(t("settings.versionCopied"));
     setTimeout(() => setVersionButtonText(t("settings.versionBtn")), 3000);
   };
 
-  // Can't use proper event listener here because it's just the DOM outside the component
   const closeButton = document.querySelector("body > generic-modal button.main-trackCreditsModal-closeBtn") as HTMLElement;
   const modalOverlay = document.querySelector("body > generic-modal > div") as HTMLElement;
   if (closeButton && modalOverlay) {
     closeButton.onclick = () => location.reload();
     closeButton.setAttribute("style", "cursor: pointer;");
     modalOverlay.onclick = (e) => {
-      // If clicked on overlay, also reload
       if (e.target === modalOverlay) {
         location.reload();
       }
@@ -128,17 +120,18 @@ const SettingsModal = ({ CONFIG, updateAppConfig }: Props) => {
 };
 
 const onBackupClick = async () => {
-  // Make a new mutation observer to make sure the modal is gone
+  let opened = false;
+
   const observer = new MutationObserver(async () => {
     const settingsModal = document.querySelector(".GenericModal[aria-label='Settings']");
-    if (!settingsModal) {
+    if (!settingsModal && !opened) {
+      opened = true;
+      observer.disconnect();
       await sleep(100);
       openModal("BACKUP");
-      observer.disconnect();
     }
   });
 
-  // TODO: does it still work if I just attach to the settings modal itself?
   observer.observe(document.body, {
     childList: true,
     subtree: true

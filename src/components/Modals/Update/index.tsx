@@ -14,7 +14,6 @@ async function fetchLatestReleaseInfo(): Promise<{
     const { body, tag_name, message } = resultJson;
     if (!body || !tag_name || message) return null;
 
-    // Releases without a trailing section only have the one heading, so fall back to the whole body
     const changes = body.match(/## What's Changed([\s\S]*?)(\r\n\r|\n\n##)/)?.[1] ?? body;
 
     return {

@@ -9,11 +9,10 @@ import ReadmePage from "./components/ReadmePage";
 import { ALL_TABS, CUSTOM_APP_PATH, LOCALSTORAGE_KEYS } from "./constants";
 import { waitForSpicetify } from "./logic/SpicetifyReady";
 import { hydrateMarketplaceStorage, marketplaceStorage } from "./logic/Storage";
-import { getLocalStorageDataFromKey } from "./logic/Utils";
+import { getBooleanFromKey, getLocalStorageDataFromKey } from "./logic/Utils";
 import locales from "./resources/locales";
 import type { Config, TabItemConfig } from "./types/marketplace-types";
 
-// This module is evaluated before Spicetify has finished populating its namespaces on a hard reload
 const getClientLocale = () => {
   try {
     return Spicetify?.Locale?.getLocale?.() || "en";
@@ -22,18 +21,14 @@ const getClientLocale = () => {
   }
 };
 
-i18n
-  .use(initReactI18next) // passes i18n down to react-i18next
-  .init({
-    // the translations
-    resources: locales,
-    // Use Spotify's client locale, not the embedded browser's (they can differ)
-    lng: getClientLocale(),
-    fallbackLng: "en",
-    interpolation: {
-      escapeValue: false // react already safes from xss => https://www.i18next.com/translation-function/interpolation#unescape
-    }
-  });
+i18n.use(initReactI18next).init({
+  resources: locales,
+  lng: getClientLocale(),
+  fallbackLng: "en",
+  interpolation: {
+    escapeValue: false
+  }
+});
 
 class App extends React.Component<
   {
@@ -58,7 +53,6 @@ class App extends React.Component<
   }
 
   createConfig() {
-    // Get tabs config from local storage
     const tabsData = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.tabs, null);
     let tabs: TabItemConfig[] = [];
     try {
@@ -78,7 +72,6 @@ class App extends React.Component<
       marketplaceStorage.setItem(LOCALSTORAGE_KEYS.tabs, JSON.stringify(tabs));
     }
 
-    // Get active theme
     let schemes = {};
     let activeScheme = null;
     try {
@@ -97,23 +90,18 @@ class App extends React.Component<
     }
 
     const config = {
-      // Fetch the settings and set defaults. Used in Settings.js
       visual: {
-        stars: JSON.parse(getLocalStorageDataFromKey("marketplace:stars", true)),
-        tags: JSON.parse(getLocalStorageDataFromKey("marketplace:tags", true)),
-        showArchived: JSON.parse(getLocalStorageDataFromKey("marketplace:showArchived", false)),
-        hideInstalled: JSON.parse(getLocalStorageDataFromKey("marketplace:hideInstalled", false)),
-        colorShift: JSON.parse(getLocalStorageDataFromKey("marketplace:colorShift", false)),
-        themeDevTools: JSON.parse(getLocalStorageDataFromKey("marketplace:themeDevTools", false)),
-        albumArtBasedColors: JSON.parse(getLocalStorageDataFromKey("marketplace:albumArtBasedColors", false)),
+        stars: getBooleanFromKey("marketplace:stars", true),
+        tags: getBooleanFromKey("marketplace:tags", true),
+        showArchived: getBooleanFromKey("marketplace:showArchived", false),
+        hideInstalled: getBooleanFromKey("marketplace:hideInstalled", false),
+        colorShift: getBooleanFromKey("marketplace:colorShift", false),
+        themeDevTools: getBooleanFromKey("marketplace:themeDevTools", false),
+        albumArtBasedColors: getBooleanFromKey("marketplace:albumArtBasedColors", false),
         albumArtBasedColorsMode: getLocalStorageDataFromKey("marketplace:albumArtBasedColorsMode") || "monochrome-light",
         albumArtBasedColorsVibrancy: getLocalStorageDataFromKey("marketplace:albumArtBasedColorsVibrancy") || "PROMINENT",
-        // Legacy from reddit app
-        type: JSON.parse(getLocalStorageDataFromKey("marketplace:type", false)),
-        // I was considering adding watchers as "followers" but it looks like the value is a duplicate
-        // of stargazers, and the subscribers_count isn't returned in the main API call we make
-        // https://github.community/t/bug-watchers-count-is-the-duplicate-of-stargazers-count/140865/4
-        followers: JSON.parse(getLocalStorageDataFromKey("marketplace:followers", false))
+        type: getBooleanFromKey("marketplace:type", false),
+        followers: getBooleanFromKey("marketplace:followers", false)
       },
       tabs,
       activeTab: getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.activeTab, tabs[0]),
@@ -133,7 +121,6 @@ class App extends React.Component<
   }
 
   async componentDidMount() {
-    // A hard reload (Ctrl+Shift+R) renders us before Spicetify.Platform etc. exist
     await waitForSpicetify();
 
     const clientLocale = getClientLocale();
@@ -157,10 +144,7 @@ class App extends React.Component<
 
   renderRoute() {
     const { location, replace } = Spicetify.Platform.History;
-    // If page state set to display readme, render it
-    // (This location state data comes from Card.openReadme())
     if (location.pathname === `${CUSTOM_APP_PATH}/readme`) {
-      // If no data, redirect to main page
       if (!location.state?.data) {
         replace(CUSTOM_APP_PATH);
         return null;

@@ -1,6 +1,5 @@
 import React from "react";
 
-// Export GitHub icon SVG as a React component
 const GitHubIcon = () => {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" role="img" aria-label="GitHub Icon">

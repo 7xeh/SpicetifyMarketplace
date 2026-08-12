@@ -2,6 +2,7 @@ import { t } from "i18next";
 import { highlight, languages } from "prismjs/components/prism-core";
 import React from "react";
 import Editor from "react-simple-code-editor";
+import type {} from "wicg-file-system-access";
 import "prismjs/components/prism-json";
 
 import { exportMarketplace, importMarketplace } from "../../../logic/Utils";
@@ -16,7 +17,7 @@ const BackupModal = () => {
 
   async function saveFile(data: FileSystemWriteChunkType) {
     const date = new Date();
-    const newHandle = await window.showSaveFilePicker({
+    const newHandle = await showSaveFilePicker({
       id: "marketplace-settings-backup",
       suggestedName: `marketplace-settings-${date.toISOString()}.json`,
       excludeAcceptAllOption: true,
@@ -50,19 +51,12 @@ const BackupModal = () => {
     Spicetify.PopupModal.hide();
   };
 
-  /**
-   * Load in settings from a JSON string, then reload the page.
-   * If the string is empty or the JSON is invalid, show an error.
-   * @param settingsString JSON string of settings to import
-   */
   const importSettings = async (settingsString: string) => {
-    // Check if the settings data exists, if not return an error message and exit
     if (!settingsString) {
       Spicetify.showNotification(t("backupModal.noDataPasted"));
       return;
     }
 
-    // Check if settings string is valid JSON, if not return an error message and exit
     let settings: unknown;
     try {
       settings = JSON.parse(settingsString);
@@ -80,22 +74,22 @@ const BackupModal = () => {
     }
   };
 
-  /**
-   * Import settings from the text input
-   */
   const importSettingsFromInput = async () => {
     await importSettings(importText);
   };
 
-  /**
-   * Prompt user to select a file to import and then run importMarketplace
-   */
   const importSettingsFromFile = async () => {
-    const fileHandle = await window.showOpenFilePicker();
-    const file = await fileHandle[0].getFile();
-    const text = await file.text();
+    try {
+      const fileHandle = await showOpenFilePicker();
+      const file = await fileHandle[0].getFile();
+      const text = await file.text();
 
-    await importSettings(text);
+      await importSettings(text);
+    } catch (error) {
+      if (isAbortError(error)) return;
+      console.error("Failed to read Marketplace backup file", error);
+      Spicetify.showNotification(t("backupModal.invalidJSON"), true);
+    }
   };
 
   return (
@@ -106,18 +100,13 @@ const BackupModal = () => {
           <Editor
             value={importText}
             onValueChange={(text) => setImportText(text)}
-            highlight={(text) => highlight(text, languages.css)}
+            highlight={(text) => highlight(text, languages.json)}
             textareaId="marketplace-import-text"
             textareaClassName="import-textarea"
             readOnly={false}
             className="marketplace-code-editor-textarea"
             placeholder={t("backupModal.inputPlaceholder")}
-            style={
-              {
-                // fontFamily: "'Fira code', 'Fira Mono', monospace'",
-                // fontSize: 12,
-              }
-            }
+            style={{}}
           />
         </div>
       </div>
