@@ -14,11 +14,11 @@ jobs:
       new_version: ${{ steps.check_result.outputs.new_version }}
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
       - name: Check the package version
@@ -42,7 +42,7 @@ jobs:
       contents: write
     steps:
       - name: Wait for "Push" workflow
-        uses: lewagon/wait-on-check-action@v1.3.1
+        uses: lewagon/wait-on-check-action@v1.9.1
         with:
           ref: ${{ github.ref }}
           check-name: Push
@@ -55,7 +55,7 @@ jobs:
           mv "$(basename '${{ github.repository }}')-dist" marketplace-dist
           zip -qr marketplace.zip marketplace-dist
       - name: Publish the release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.check_version.outputs.new_version }}
           generate_release_notes: true
