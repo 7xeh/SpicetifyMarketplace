@@ -3,7 +3,32 @@ import type { TabItemConfig } from "./types/marketplace-types";
 
 export const MARKETPLACE_VERSION = version;
 
+export const APP_ID = "sevens-marketplace";
+
+export const APP_NAME = "7's Marketplace";
+
+export const UPSTREAM_APP_IDS = ["marketplace", "spicetify-marketplace"];
+
+export const THEME_PLACEHOLDER_NAMES = [APP_ID, ...UPSTREAM_APP_IDS];
+
+export const DOM_PREFIX = "sevensMarketplace";
+
+export const SESSION_KEYS = {
+  requestTld: `${APP_ID}:request-tld`,
+  blacklist: `${APP_ID}:blacklist`,
+  runtimeReady: `${APP_ID}:session:runtime-ready`,
+  loadedExtensions: `${APP_ID}:session:loaded-extensions`,
+  loadedThemeScripts: `${APP_ID}:session:loaded-theme-scripts`
+};
+
+export const SESSION_PRESERVED_PREFIX = `${APP_ID}:session:`;
+
 const STORAGE_KEY_PREFIX = "marketplace";
+
+export const STORAGE_PREFIX = `${STORAGE_KEY_PREFIX}:`;
+
+export const settingKey = (name: string) => `${STORAGE_PREFIX}${name}`;
+
 export const LOCALSTORAGE_KEYS = {
   installedExtensions: `${STORAGE_KEY_PREFIX}:installed-extensions`,
   installedSnippets: `${STORAGE_KEY_PREFIX}:installed-snippets`,
@@ -29,7 +54,7 @@ export const ALL_TABS: TabItemConfig[] = [
 
 export const ITEMS_PER_REQUEST = 100;
 
-export const CUSTOM_APP_PATH = "/marketplace";
+export const CUSTOM_APP_PATH = `/${APP_ID}`;
 
 export const MAX_TAGS = 4;
 

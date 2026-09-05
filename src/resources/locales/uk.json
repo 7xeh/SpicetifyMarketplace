@@ -77,7 +77,7 @@
     },
     "updateModal": {
       "title": "Оновити Маркетплейс",
-      "description": "Оновіть Spicetify Marketplace щоб отримувати нові функції і багфікси.",
+      "description": "Оновіть 7's Marketplace щоб отримувати нові функції і багфікси.",
       "currentVersion": "Поточна версія: {{version}}",
       "latestVersion": "Остання версія: {{version}}",
       "whatsChanged": "Що змінилося",
@@ -86,7 +86,7 @@
       "viewGuide": "Переглянути посібник"
     },
     "grid": {
-      "spicetifyMarketplace": "Маркетплейс Spicetify",
+      "spicetifyMarketplace": "7's Marketplace",
       "newUpdate": "Нове оновлення",
       "addCSS": "Додати CSS",
       "search": "Пошук",

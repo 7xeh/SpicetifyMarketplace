@@ -289,7 +289,7 @@ class Grid extends React.Component<
           }
         }
 
-        sortCardItems(extensions, marketplaceStorage.getItem("marketplace:sort") || "stars");
+        sortCardItems(extensions, marketplaceStorage.getItem(LOCALSTORAGE_KEYS.sort) || "stars");
 
         for (const extension of extensions) {
           this.appendCard(extension, "extension", activeTab);
@@ -329,7 +329,7 @@ class Grid extends React.Component<
               installedOfType.push(parsedItem.data as CardItem | Snippet);
             }
 
-            sortCardItems(installedOfType, marketplaceStorage.getItem("marketplace:sort") || "stars");
+            sortCardItems(installedOfType, marketplaceStorage.getItem(LOCALSTORAGE_KEYS.sort) || "stars");
 
             for (const item of installedOfType) {
               this.appendCard(item, type as CardType, activeTab);
@@ -362,7 +362,7 @@ class Grid extends React.Component<
         }
         this.setState({ cards: this.cardList });
 
-        sortCardItems(themes, marketplaceStorage.getItem("marketplace:sort") || "stars");
+        sortCardItems(themes, marketplaceStorage.getItem(LOCALSTORAGE_KEYS.sort) || "stars");
 
         for (const theme of themes) {
           this.appendCard(theme, "theme", activeTab);
@@ -400,7 +400,7 @@ class Grid extends React.Component<
         }
         this.setState({ cards: this.cardList });
 
-        sortCardItems(apps, marketplaceStorage.getItem("marketplace:sort") || "stars");
+        sortCardItems(apps, marketplaceStorage.getItem(LOCALSTORAGE_KEYS.sort) || "stars");
 
         for (const app of apps) {
           this.appendCard(app, "app", activeTab);
@@ -423,7 +423,7 @@ class Grid extends React.Component<
         }
 
         if (snippets?.length) {
-          sortCardItems(snippets, marketplaceStorage.getItem("marketplace:sort") || "stars");
+          sortCardItems(snippets, marketplaceStorage.getItem(LOCALSTORAGE_KEYS.sort) || "stars");
           for (const snippet of snippets) {
             this.appendCard(snippet, "snippet", activeTab);
           }
@@ -538,7 +538,7 @@ class Grid extends React.Component<
 
   async checkForUpdates() {
     const { data } = await fetchGitHubJson<{ name?: string; message?: string }>(LATEST_RELEASE_URL, {
-      cacheKey: "marketplace-latest-release",
+      cacheKey: "latest-release",
       ttlMs: CACHE_TTL.release,
       notifyOnRateLimit: false
     });

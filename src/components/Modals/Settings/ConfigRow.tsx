@@ -1,4 +1,5 @@
 import React from "react";
+import { settingKey } from "../../../constants";
 import { marketplaceStorage } from "../../../logic/Storage";
 import type { Config } from "../../../types/marketplace-types";
 import TooltipIcon from "../../Icons/TooltipIcon";
@@ -25,7 +26,7 @@ const ConfigRow = (props: {
     const storageKey = e.target.dataset.storageKey;
     props.modalConfig.visual[storageKey] = state;
     console.debug(`toggling ${storageKey} to ${state}`);
-    marketplaceStorage.setItem(`marketplace:${storageKey}`, String(state));
+    marketplaceStorage.setItem(settingKey(storageKey), String(state));
 
     props.updateConfig(props.modalConfig);
   };
@@ -33,7 +34,7 @@ const ConfigRow = (props: {
     const state = value;
     const storageKey = props.storageKey;
     props.modalConfig.visual[storageKey] = state;
-    marketplaceStorage.setItem(`marketplace:${storageKey}`, String(state));
+    marketplaceStorage.setItem(settingKey(storageKey), String(state));
     props.updateConfig(props.modalConfig);
   };
   if (props.description === undefined || props.description === null) {

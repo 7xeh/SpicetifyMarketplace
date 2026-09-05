@@ -78,7 +78,7 @@
     },
     "updateModal": {
       "title": "更新 Marketplace",
-      "description": "更新 Spicetify Marketplace 以获取新功能和错误修复。",
+      "description": "更新 7's Marketplace 以获取新功能和错误修复。",
       "currentVersion": "当前版本：{{version}}",
       "latestVersion": "最新版本：{{version}}",
       "whatsChanged": "新版变化",
@@ -87,7 +87,7 @@
       "viewGuide": "查看指南"
     },
     "grid": {
-      "spicetifyMarketplace": "Spicetify Marketplace",
+      "spicetifyMarketplace": "7's Marketplace",
       "newUpdate": "有更新",
       "addCSS": "添加 CSS",
       "search": "搜索",

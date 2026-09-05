@@ -1,6 +1,6 @@
 declare global {
   interface Window {
-    Marketplace: Record<string, unknown>;
+    SevensMarketplace: Record<string, unknown>;
   }
 }
 

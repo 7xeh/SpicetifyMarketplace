@@ -8,6 +8,7 @@ explained below.
 Only functional directives survive in the source: `@ts-expect-error` and `biome-ignore`. Those are
 compiler and linter instructions, not prose. Everything the minifier strips is here.
 
+- [Identity and namespacing](#identity-and-namespacing)
 - [Build and entry points](#build-and-entry-points)
 - [Startup order](#startup-order)
 - [Remote data](#remote-data)
@@ -20,11 +21,37 @@ compiler and linter instructions, not prose. Everything the minifier strips is h
 - [Snippets](#snippets)
 - [The tab bar](#the-tab-bar)
 - [Readme pages](#readme-pages)
+- [Modal chrome](#modal-chrome)
 - [Settings, backup and dev tools](#settings-backup-and-dev-tools)
 - [Localisation](#localisation)
 - [Security invariants](#security-invariants)
 - [Cross-file invariants](#cross-file-invariants)
 - [Known rough edges](#known-rough-edges)
+
+## Identity and namespacing
+
+This fork ships as its own Spicetify custom app so it can sit beside the official Marketplace
+instead of replacing it. Everything that could collide with an official install is derived from two
+constants in `constants.ts`:
+
+| Constant | Value | Used for |
+| --- | --- | --- |
+| `APP_ID` | `sevens-marketplace` | `CustomApps/` folder, `custom_apps` entry, `CUSTOM_APP_PATH`, placeholder theme folder, IndexedDB name, `sessionStorage` keys, the `RequestCache` prefix |
+| `APP_NAME` | `7's Marketplace` | Sidebar label, page heading, console messages |
+| `DOM_PREFIX` | `sevensMarketplace` | Marker classes on the `<style>` and `<script>` tags injected into the client |
+
+`APP_ID` must stay a valid JavaScript identifier once `spicetify-creator` mangles it — it becomes a
+global name in the generated bundle, so it cannot start with a digit. That is why the id is
+`sevens-marketplace` rather than `7s-marketplace`.
+
+Storage **keys** deliberately keep their original `marketplace:` prefix (`STORAGE_PREFIX`). They are
+already isolated by living in this fork's own IndexedDB database, and leaving them unchanged means
+data imported from an official install needs no rewriting — the install lists hold those key strings
+as values, so renaming the prefix would mean rewriting values too.
+
+`THEME_PLACEHOLDER_NAMES` accepts this fork's placeholder theme and the official one. Both are empty
+placeholders that exist only so Spicetify has a `current_theme` to resolve while the CSS is injected
+at runtime, so either is a valid state to install themes from.
 
 ## Build and entry points
 
@@ -57,7 +84,8 @@ source changes nothing about the shipped bundle.
    [react-simple-code-editor#86](https://github.com/satya164/react-simple-code-editor/issues/86);
    the editor references a bare `global` that does not exist in the browser.
 3. Hydrates storage from IndexedDB (see [Persistent storage](#persistent-storage)).
-4. Exposes `window.Marketplace` — `reset()`, `export()`, `clearCache()`, `version`. `reset()` exists
+4. Exposes `window.SevensMarketplace` — `reset()`, `export()`, `importFromSpicetifyMarketplace()`,
+   `clearCache()`, `version`. `reset()` exists
    so a user can recover from a broken state via the dev console without reinstalling.
 5. Drops install-list entries whose payload is missing (`pruneOrphanedInstallKeys()`). A key that is
    listed as installed but has no data behind it can never be loaded, so leaving it in place would
@@ -68,9 +96,9 @@ source changes nothing about the shipped bundle.
 
 **`initializePreload()`** — warms the manifest cache for the grid in the background so opening the
 Marketplace tab is not a cold start. It runs `clearMarketplaceSessionCache()` first, which drops
-`marketplace`-prefixed `sessionStorage` entries but keeps `marketplace-request-tld` and the
-`marketplace:session:*` runtime record. A blanket `sessionStorage.clear()` raced `init()` writing
-the TLD, and wiped Spotify's own session keys as collateral.
+`sevens-marketplace`-prefixed `sessionStorage` entries but keeps `sevens-marketplace:request-tld`
+and the `sevens-marketplace:session:*` runtime record. A blanket `sessionStorage.clear()` raced
+`init()` writing the TLD, and wiped Spotify's own session keys as collateral.
 
 Both IIFEs attach a `.catch()`. Without one, a rejection anywhere in startup silently aborts the
 rest of theme and extension loading.
@@ -83,8 +111,8 @@ rest of theme and extension loading.
 - Online → the CDN is blocked or down; notify the user and stop.
 - Offline → register a one-shot `online` listener and re-run `init()` when connectivity returns.
 
-The resolved TLD goes into `sessionStorage` as `marketplace-request-tld` so the custom app can reuse
-it without probing again.
+The resolved TLD goes into `sessionStorage` as `sevens-marketplace:request-tld` so the custom app can
+reuse it without probing again.
 
 ### Why jsDelivr at all
 
@@ -169,7 +197,7 @@ pattern list comes from a remote file.
 Two layers, both in `src/logic/`.
 
 **`RequestCache.ts`** — a memory `Map` in front of `localStorage`, keyed with a
-`marketplace-cache:` prefix. Entries are `{ t: timestamp, v: value }`. Anything over 1 MB is not
+`sevens-marketplace-cache:` prefix. Entries are `{ t: timestamp, v: value }`. Anything over 1 MB is not
 persisted. On a quota error it evicts the oldest half and retries once. `pruneRequestCache()` runs
 at startup and drops anything older than 7 days.
 
@@ -199,18 +227,31 @@ wrapper or the "Installed" tab alone will exhaust the budget.
 
 ## Persistent storage
 
-`Storage.ts` fronts an IndexedDB store (`spicetify-marketplace` / `settings`) with a synchronous
+`Storage.ts` fronts an IndexedDB store (`sevens-marketplace` / `settings`) with a synchronous
 in-memory `Map`, because the rest of the codebase was written against a synchronous
 `localStorage`-shaped API. `hydrateMarketplaceStorage()` loads the whole store into memory, then
-migrates any legacy `marketplace:`-prefixed `localStorage` keys across. Hydration retries a few
-times before giving up; callers treat a rejection as "storage unreadable" and load nothing, because
-rebuilding Spicetify's config from an empty view would look like a mass uninstall.
+imports the official Marketplace's data on first run. Hydration retries a few times before giving
+up; callers treat a rejection as "storage unreadable" and load nothing, because rebuilding
+Spicetify's config from an empty view would look like a mass uninstall.
 
-Migration writes a `spicetify-marketplace:internal:local-storage-migrated` marker alongside the
-copied records and only then deletes the `localStorage` originals. Without the marker, a key
-deleted from IndexedDB was re-imported from `localStorage` on the next launch — that is how removed
-extensions came back from the dead. The marker key is deliberately not `marketplace:`-prefixed so
-resets, exports and backups leave it alone.
+### The first-run import
+
+`importUpstreamData()` looks for an official install's data in order: the `spicetify-marketplace`
+IndexedDB database (used by current upstream builds and by this fork before v1.3.0), then
+`marketplace:`-prefixed `localStorage` keys (older upstream builds). Whatever it finds is **copied**
+into this fork's database and a `sevens-marketplace:internal:imported` marker is written, so it runs
+exactly once.
+
+The import never deletes from the source. An earlier version of this code moved the `localStorage`
+keys and removed the originals, which erased the installs of anyone who also had the official
+Marketplace — that is the bug this design exists to prevent. It is also why the two apps drift apart
+after the first launch, which is the intended behaviour: they are separate installs.
+
+`reimportSpicetifyMarketplaceData()` runs the same copy again with overwrite semantics and is exposed
+as `SevensMarketplace.importFromSpicetifyMarketplace()` for recovery from the console.
+
+The marker and the fallback keys below are deliberately not `marketplace:`-prefixed, so resets,
+exports and backups leave them alone.
 
 Reads are synchronous against the map. Writes go through `commit()`: a draft copy of the map is
 mutated, the resulting adds and deletes are diffed, applied to the live map, and persisted in a
@@ -219,7 +260,10 @@ payload and updating its install list — either lands whole or not at all. All 
 serialised through one queue so concurrent callers cannot clobber each other'"'"'s diff.
 
 If IndexedDB is unavailable or a transaction fails, the same updates and deletes are replayed
-against `localStorage` so the change is not silently lost.
+against `localStorage` under a `sevens-marketplace:fallback:` prefix — never under the bare
+`marketplace:` keys, which belong to the official install. On the next successful hydration
+`drainLocalStorageFallback()` merges those entries back into IndexedDB and clears them, so a
+temporary failure heals itself instead of leaving a stale shadow copy that wins forever.
 
 Every queued write is tracked, and `flush()` awaits them — reloading Spotify drops the in-memory
 map, so pending writes have to land first. Anything that calls `location.reload()` after a write
@@ -238,6 +282,8 @@ should either use the `…Async` variants or call `flush()`.
 | `marketplace:albumArtBasedColors*`, `:colorShift` | Colour behaviour toggles |
 | `marketplace:installed:{user}/{repo}/{file}` | An installed extension or theme |
 | `marketplace:installed:snippet:{Dashed-Title}` | An installed snippet |
+| `sevens-marketplace:internal:imported` | Set once the first-run import has run |
+| `sevens-marketplace:fallback:{key}` | `localStorage` shadow of a failed IndexedDB write |
 
 Two levels: a list of keys, and the payload under each key. Install and remove write both halves in
 one `mutateAsync()` transaction, so they cannot drift apart mid-operation. They can still disagree
@@ -260,9 +306,9 @@ At the end of `init()` the extension bundle writes what it actually loaded into 
 
 | Key | Contents |
 | --- | --- |
-| `marketplace:session:loaded-extensions` | `{ key, title }` for every extension whose script was injected |
-| `marketplace:session:loaded-theme-scripts` | `{ key, title }` for every theme `include` script injected |
-| `marketplace:session:runtime-ready` | Set once loading finished; until then the diff is suppressed |
+| `sevens-marketplace:session:loaded-extensions` | `{ key, title }` for every extension whose script was injected |
+| `sevens-marketplace:session:loaded-theme-scripts` | `{ key, title }` for every theme `include` script injected |
+| `sevens-marketplace:session:runtime-ready` | Set once loading finished; until then the diff is suppressed |
 
 `getPendingChanges()` diffs that record against what storage now says is installed. An installed
 item that was never loaded is pending `enable`; a loaded item that is no longer installed is pending
@@ -368,7 +414,7 @@ also matches inside the URL just written, so the second replacement lands in the
 first, producing `.../assets/https://.../assets/img.png` and leaving the real second occurrence
 untouched.
 
-The result is injected as a `<style class="marketplaceCSS marketplaceUserCSS">` and Spicetify's own
+The result is injected as a `<style class="sevensMarketplaceCSS sevensMarketplaceUserCSS">` and Spicetify's own
 `<link href="user.css">` is removed. Reverting re-adds the link.
 
 ### Colour schemes
@@ -406,7 +452,7 @@ script in the theme.
 ## Snippets
 
 Snippets are raw CSS, either from the upstream catalogue or written by the user. All installed
-snippets are concatenated into a single `<style class="marketplaceSnippets">`, each preceded by a
+snippets are concatenated into a single `<style class="sevensMarketplaceSnippets">`, each preceded by a
 `/* title - description */` header.
 
 `*/` inside a title or description is escaped. Otherwise it closes the header comment and the rest
@@ -451,6 +497,21 @@ Two workarounds live here:
 - Readme images use paths relative to the repo, which resolve against
   `xpui.app.spotify.com` and 404. An error handler rewrites them to the raw GitHub URL: absolute
   paths against the repo root, relative ones against the readme's directory.
+
+## Modal chrome
+
+`Spicetify.PopupModal` builds its markup from Spotify's old Track Credits modal, inside a
+`<generic-modal>` custom element. Spotify has since deleted those classes, so the shell renders
+unstyled: no padding, the close button dropping into normal flow below the title, and no scroll
+container, which leaves long modals overflowing the box.
+
+`_fixes.scss` restores that chrome — `.main-trackCreditsModal-container` for `isLarge: false`,
+`.main-trackCreditsModal-header`, `-closeBtn` and `-mainSection`, plus a `min-height: 0` on
+`.main-embedWidgetGenerator-container` so its scrolling section can shrink inside the flex column.
+
+Everything is scoped to `generic-modal`. Spotify's own dialogs share `.GenericModal__overlay` but
+use a hashed class for the box itself, so an unscoped rule would restyle parts of the client that
+are not broken.
 
 ## Settings, backup and dev tools
 
@@ -517,13 +578,15 @@ Because the extension and the app are separate bundles that must agree:
   produce — class names, tag placement — breaks the other consumer.
 - `injectUserCSS()` in `Utils.ts` is the single entry point for swapping the active theme CSS. Cards
   fetch the CSS through `parseCSS()` before writing anything, then hand the result to it.
-- Marker classes are load-bearing: `marketplaceCSS`, `marketplaceScheme`, `marketplaceUserCSS`,
-  `marketplaceSnippets`, `marketplaceScript`. Injection removes the previous element by class
-  before adding a new one, so renaming one leaks duplicate style tags.
+- Marker classes are load-bearing: `sevensMarketplaceCSS`, `sevensMarketplaceScheme`,
+  `sevensMarketplaceUserCSS`, `sevensMarketplaceSnippets`, `sevensMarketplaceScript`, all built from
+  `DOM_PREFIX` and exported from `Utils.ts`. Injection removes the previous element by class before
+  adding a new one, so renaming one leaks duplicate style tags. The prefix is what stops an official
+  Marketplace install from removing this fork's style tags and vice versa.
 - `data-marketplace-extension` on an injected extension `<script>` carries its storage key. Removal
   uses it to take the tag back out of the DOM.
-- The `marketplace:session:*` keys are written by the extension bundle and read by the app bundle.
-  Both sides go through `PendingReload.ts`; nothing else should touch them.
+- The `sevens-marketplace:session:*` keys are written by the extension bundle and read by the app
+  bundle. Both sides go through `PendingReload.ts`; nothing else should touch them.
 - `Spicetify.Config.current_theme` and `color_scheme` are typed read-only but are written anyway,
   via `@ts-expect-error`. Other Spicetify code reads them to decide what is active.
 - `data-card-type` on the grid container carries the localised section name. Nothing in this

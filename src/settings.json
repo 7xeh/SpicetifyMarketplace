@@ -1,9 +1,8 @@
 {
   "displayName": {
-    "en": "Marketplace",
-    "ru": "Маркетплейс"
+    "en": "7's Marketplace"
   },
-  "nameId": "marketplace",
+  "nameId": "sevens-marketplace",
   "icon": "assets/icon.svg",
   "activeIcon": "assets/icon-filled.svg"
 }

@@ -1,9 +1,8 @@
 @use "../constants.scss";
 
-/* .GenericModal gets height: 90% from an inline style attribute */
-.GenericModal:has(#marketplace-reload-container) {
+/* Spicetify sets height on .GenericModal inline; the reload modal is short */
+generic-modal .GenericModal:has(#marketplace-reload-container) {
   height: auto !important;
-  max-height: 90%;
 }
 
 #marketplace-reload-container {

@@ -77,7 +77,7 @@
     },
     "updateModal": {
       "title": "Päivitä Marketplace",
-      "description": "Päivitä Spicetify Marketplace saadaksesi uusia ominaisuuksia ja bugikorjauksia.",
+      "description": "Päivitä 7's Marketplace saadaksesi uusia ominaisuuksia ja bugikorjauksia.",
       "currentVersion": "Nykyinen versio: {{version}}",
       "latestVersion": "Uusin versio: {{version}}",
       "whatsChanged": "Mitä on muuttunut",
@@ -86,7 +86,7 @@
       "viewGuide": "Näytä opas"
     },
     "grid": {
-      "spicetifyMarketplace": "Spicetify Marketplace",
+      "spicetifyMarketplace": "7's Marketplace",
       "newUpdate": "Uusi päivitys",
       "addCSS": "Lisää CSS",
       "search": "Haku",

@@ -2,7 +2,7 @@ import Chroma from "chroma-js";
 import { t } from "i18next";
 
 import type { CardProps } from "../components/Card/Card";
-import { LOCALSTORAGE_KEYS } from "../constants";
+import { APP_ID, DOM_PREFIX, LOCALSTORAGE_KEYS, SESSION_KEYS, SESSION_PRESERVED_PREFIX, STORAGE_PREFIX } from "../constants";
 import type { Author, CardItem, ColourScheme, ResetCategory, SchemeIni, Snippet, SortBoxOption } from "../types/marketplace-types";
 import { marketplaceStorage } from "./Storage";
 
@@ -178,8 +178,14 @@ export const unparseIni = (data: SchemeIni) => {
   return output;
 };
 
+export const SNIPPETS_STYLE_CLASS = `${DOM_PREFIX}Snippets`;
+export const THEME_CSS_CLASS = `${DOM_PREFIX}CSS`;
+export const THEME_SCHEME_CLASS = `${DOM_PREFIX}Scheme`;
+export const THEME_USER_CSS_CLASS = `${DOM_PREFIX}UserCSS`;
+export const THEME_SCRIPT_CLASS = `${DOM_PREFIX}Script`;
+
 export const initializeSnippets = (snippets: Snippet[]) => {
-  const existingSnippets = document.querySelector("style.marketplaceSnippets");
+  const existingSnippets = document.querySelector(`style.${SNIPPETS_STYLE_CLASS}`);
   if (existingSnippets) existingSnippets.remove();
 
   const style = document.createElement("style");
@@ -191,7 +197,7 @@ export const initializeSnippets = (snippets: Snippet[]) => {
   }, "");
 
   style.textContent = styleContent;
-  style.classList.add("marketplaceSnippets");
+  style.classList.add(SNIPPETS_STYLE_CLASS);
   document.body.appendChild(style);
 };
 
@@ -250,7 +256,7 @@ async function removeMarketplaceData(categories: ResetCategory[]) {
 
   if (categories.length === 0) {
     for (const key of marketplaceStorage.keys()) {
-      if (key.startsWith("marketplace:")) keysToRemove.push(key);
+      if (key.startsWith(STORAGE_PREFIX)) keysToRemove.push(key);
     }
   }
 
@@ -299,7 +305,7 @@ export const exportMarketplace = () => {
   const data = {};
 
   for (const [key, value] of Object.entries(marketplaceStorage.entries())) {
-    if (key.startsWith("marketplace:")) {
+    if (key.startsWith(STORAGE_PREFIX)) {
       data[key] = value;
     }
   }
@@ -313,7 +319,7 @@ function isMarketplaceBackupData(data: unknown): data is Record<string, string> 
   const entries = Object.entries(data);
   if (entries.length === 0) return false;
 
-  return entries.every(([key, value]) => key.startsWith("marketplace:") && typeof value === "string");
+  return entries.every(([key, value]) => key.startsWith(STORAGE_PREFIX) && typeof value === "string");
 }
 
 export const importMarketplace = async (data: unknown) => {
@@ -330,13 +336,13 @@ export const importMarketplace = async (data: unknown) => {
 const SCHEME_KEY_PATTERN = /^[\w-]+$/;
 
 export const injectColourScheme = (scheme: ColourScheme | null) => {
-  const existingMarketplaceSchemeCSS = document.querySelector("style.marketplaceCSS.marketplaceScheme");
+  const existingMarketplaceSchemeCSS = document.querySelector(`style.${THEME_CSS_CLASS}.${THEME_SCHEME_CLASS}`);
   if (existingMarketplaceSchemeCSS) existingMarketplaceSchemeCSS.remove();
 
   if (scheme && typeof scheme === "object") {
     const schemeTag = document.createElement("style");
-    schemeTag.classList.add("marketplaceCSS");
-    schemeTag.classList.add("marketplaceScheme");
+    schemeTag.classList.add(THEME_CSS_CLASS);
+    schemeTag.classList.add(THEME_SCHEME_CLASS);
 
     let injectStr = ":root {";
     const themeIniKeys = Object.keys(scheme);
@@ -370,13 +376,13 @@ export const injectUserCSS = (userCSS?: string) => {
     const existingUserThemeCSS = document.querySelector("link[href='user.css']");
     if (existingUserThemeCSS) existingUserThemeCSS.remove();
 
-    const existingMarketplaceUserCSS = document.querySelector("style.marketplaceCSS.marketplaceUserCSS");
+    const existingMarketplaceUserCSS = document.querySelector(`style.${THEME_CSS_CLASS}.${THEME_USER_CSS_CLASS}`);
     if (existingMarketplaceUserCSS) existingMarketplaceUserCSS.remove();
 
     if (userCSS) {
       const userCssTag = document.createElement("style");
-      userCssTag.classList.add("marketplaceCSS");
-      userCssTag.classList.add("marketplaceUserCSS");
+      userCssTag.classList.add(THEME_CSS_CLASS);
+      userCssTag.classList.add(THEME_USER_CSS_CLASS);
       userCssTag.textContent = userCSS;
       document.body.appendChild(userCssTag);
     } else {
@@ -553,8 +559,7 @@ export const getParamsFromGithubRaw = (url: string) => {
   return obj;
 };
 
-const PRESERVED_SESSION_KEYS = ["marketplace-request-tld"];
-const PRESERVED_SESSION_PREFIX = "marketplace:session:";
+const PRESERVED_SESSION_KEYS = [SESSION_KEYS.requestTld];
 
 export function clearMarketplaceSessionCache() {
   const staleKeys: string[] = [];
@@ -562,8 +567,8 @@ export function clearMarketplaceSessionCache() {
   for (let index = 0; index < window.sessionStorage.length; index++) {
     const key = window.sessionStorage.key(index);
     if (!key) continue;
-    if (PRESERVED_SESSION_KEYS.includes(key) || key.startsWith(PRESERVED_SESSION_PREFIX)) continue;
-    if (!key.startsWith("marketplace")) continue;
+    if (PRESERVED_SESSION_KEYS.includes(key) || key.startsWith(SESSION_PRESERVED_PREFIX)) continue;
+    if (!key.startsWith(APP_ID)) continue;
 
     staleKeys.push(key);
   }
@@ -571,7 +576,7 @@ export function clearMarketplaceSessionCache() {
   for (const key of staleKeys) window.sessionStorage.removeItem(key);
 }
 export function getInvalidCSS(): string[] {
-  const unparsedCSS = document.querySelector("body > style.marketplaceCSS.marketplaceUserCSS");
+  const unparsedCSS = document.querySelector(`body > style.${THEME_CSS_CLASS}.${THEME_USER_CSS_CLASS}`);
   const classNameList = unparsedCSS?.innerHTML;
   const regex = /.-?[_a-zA-Z]+[_a-zA-Z0-9-]*\s*{/g;
   if (!classNameList) return ["Error: Class name list not found; please create an issue"];

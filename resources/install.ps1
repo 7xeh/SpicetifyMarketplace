@@ -28,7 +28,10 @@ $ErrorActionPreference = 'Stop'
 # Windows PowerShell renders a progress bar per chunk, which makes Invoke-WebRequest downloads crawl
 $ProgressPreference = 'SilentlyContinue'
 
+$appName = 'sevens-marketplace'
+$appDisplayName = "7's Marketplace"
 $legacyAppNames = @('marketplace', 'spicetify-marketplace')
+$forkMarker = '7xeh/SpicetifyMarketplace'
 
 function Invoke-Spicetify {
     param (
@@ -65,7 +68,32 @@ function Invoke-SpicetifyWithOutput {
     }
 }
 
-function Remove-ExistingMarketplace {
+function Test-OwnedByThisFork {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$AppPath
+    )
+
+    # Older builds of this fork installed themselves as 'marketplace', which is also the folder the
+    # official Spicetify Marketplace uses. Only reclaim that folder when it is demonstrably ours.
+    foreach ($fileName in @('README.md', 'index.js', 'extension.js')) {
+        $filePath = Join-Path -Path $AppPath -ChildPath $fileName
+        if (-not (Test-Path -Path $filePath -PathType 'Leaf')) { continue }
+
+        try {
+            if (Select-String -Path $filePath -Pattern $forkMarker -SimpleMatch -Quiet -ErrorAction 'Stop') {
+                return $true
+            }
+        }
+        catch {
+            continue
+        }
+    }
+
+    return $false
+}
+
+function Remove-ExistingInstall {
     param (
         [Parameter(Mandatory = $true)]
         [string]$UserDataPath,
@@ -75,11 +103,25 @@ function Remove-ExistingMarketplace {
     )
 
     $found = @()
+    $skipped = @()
 
-    foreach ($appName in $legacyAppNames) {
-        $appPath = Join-Path -Path $UserDataPath -ChildPath "CustomApps\$appName"
+    $ownedAppNames = @($appName)
+    foreach ($legacyName in $legacyAppNames) {
+        $legacyPath = Join-Path -Path $UserDataPath -ChildPath "CustomApps\$legacyName"
+        if (-not (Test-Path -Path $legacyPath)) { continue }
+
+        if (Test-OwnedByThisFork -AppPath $legacyPath) {
+            $ownedAppNames += $legacyName
+        }
+        else {
+            $skipped += "CustomApps\$legacyName"
+        }
+    }
+
+    foreach ($name in $ownedAppNames) {
+        $appPath = Join-Path -Path $UserDataPath -ChildPath "CustomApps\$name"
         if (Test-Path -Path $appPath) {
-            $found += "CustomApps\$appName"
+            $found += "CustomApps\$name"
             Remove-Item -Path $appPath -Recurse -Force -ErrorAction 'SilentlyContinue'
         }
     }
@@ -90,17 +132,17 @@ function Remove-ExistingMarketplace {
     }
     $configuredAppList = @($configuredApps -split '[\|,]' | ForEach-Object { $_.Trim() })
 
-    foreach ($appName in $legacyAppNames) {
-        if ($configuredAppList -contains $appName) {
-            $found += "config custom_apps -> $appName"
-            Invoke-Spicetify "config" "custom_apps" "$appName-" "-q" | Out-Null
+    foreach ($name in $ownedAppNames) {
+        if ($configuredAppList -contains $name) {
+            $found += "config custom_apps -> $name"
+            Invoke-Spicetify "config" "custom_apps" "$name-" "-q" | Out-Null
         }
     }
 
-    $themePath = Join-Path -Path $UserDataPath -ChildPath 'Themes\marketplace'
+    $themePath = Join-Path -Path $UserDataPath -ChildPath "Themes\$appName"
     if (Test-Path -Path $themePath) {
-        $found += 'Themes\marketplace'
-        if ($CurrentTheme -eq 'marketplace') {
+        $found += "Themes\$appName"
+        if ($CurrentTheme -eq $appName) {
             Remove-Item -Path (Join-Path -Path $themePath -ChildPath 'user.css') -Force -ErrorAction 'SilentlyContinue'
         }
         else {
@@ -108,12 +150,16 @@ function Remove-ExistingMarketplace {
         }
     }
 
+    foreach ($entry in $skipped) {
+        Write-Host -Object "Leaving the official Spicetify Marketplace alone: $entry" -ForegroundColor 'DarkGray'
+    }
+
     if ($found.Count -eq 0) {
-        Write-Host -Object 'No existing Marketplace installation found.' -ForegroundColor 'DarkGray'
+        Write-Host -Object "No existing $appDisplayName installation found." -ForegroundColor 'DarkGray'
         return $false
     }
 
-    Write-Host -Object 'Removed existing Marketplace installation:' -ForegroundColor 'Yellow'
+    Write-Host -Object "Removed the existing $appDisplayName installation:" -ForegroundColor 'Yellow'
     foreach ($entry in $found) {
         Write-Host -Object "  - $entry" -ForegroundColor 'DarkGray'
     }
@@ -205,7 +251,7 @@ function Build-FromSource {
         & pnpm install --frozen-lockfile
         if ($LASTEXITCODE -ne 0) { throw 'pnpm install failed.' }
 
-        Write-Host -Object 'Building Marketplace...' -ForegroundColor 'Cyan'
+        Write-Host -Object "Building $appDisplayName..." -ForegroundColor 'Cyan'
         & pnpm build:local
         if ($LASTEXITCODE -ne 0) { throw 'pnpm build:local failed.' }
     }
@@ -250,8 +296,8 @@ try {
 if (-not (Test-Path -Path $spiceUserDataPath -PathType 'Container' -ErrorAction 'SilentlyContinue')) {
     $spiceUserDataPath = "$env:APPDATA\spicetify"
 }
-$marketAppPath = "$spiceUserDataPath\CustomApps\marketplace"
-$marketThemePath = "$spiceUserDataPath\Themes\marketplace"
+$marketAppPath = "$spiceUserDataPath\CustomApps\$appName"
+$marketThemePath = "$spiceUserDataPath\Themes\$appName"
 
 $isThemeInstalled = $(
     Invoke-Spicetify "path" "-s" | Out-Null
@@ -260,20 +306,20 @@ $isThemeInstalled = $(
 $currentTheme = (Invoke-SpicetifyWithOutput "config" "current_theme").Output
 $setTheme = $true
 
-Write-Host -Object 'Checking for an existing Marketplace installation...' -ForegroundColor 'Cyan'
-Remove-ExistingMarketplace -UserDataPath $spiceUserDataPath -CurrentTheme $currentTheme | Out-Null
+Write-Host -Object "Checking for an existing $appDisplayName installation..." -ForegroundColor 'Cyan'
+Remove-ExistingInstall -UserDataPath $spiceUserDataPath -CurrentTheme $currentTheme | Out-Null
 
 if ($UninstallOnly) {
     Invoke-Spicetify "apply"
-    Write-Host -Object 'Marketplace has been removed.' -ForegroundColor 'Green'
+    Write-Host -Object "$appDisplayName has been removed." -ForegroundColor 'Green'
     Write-Host -Object 'Its settings and installed items are stored inside Spotify and are not touched by this script.' -ForegroundColor 'DarkGray'
     return
 }
 
-Write-Host -Object 'Creating Marketplace folders...' -ForegroundColor 'Cyan'
+Write-Host -Object "Creating $appDisplayName folders..." -ForegroundColor 'Cyan'
 try {
     if (-not (New-Item -Path $marketAppPath, $marketThemePath -ItemType 'Directory' -Force -ErrorAction 'Stop')) {
-        Write-Host -Object "Error: Failed to create Marketplace directories." -ForegroundColor 'Red'
+        Write-Host -Object "Error: Failed to create the $appDisplayName directories." -ForegroundColor 'Red'
         return
     }
 } catch {
@@ -294,7 +340,7 @@ try {
     }
 
     if ($releaseUri) {
-        Write-Host -Object "Downloading Marketplace from $releaseUri" -ForegroundColor 'Cyan'
+        Write-Host -Object "Downloading $appDisplayName from $releaseUri" -ForegroundColor 'Cyan'
         $marketArchivePath = Join-Path -Path $workPath -ChildPath 'marketplace.zip'
         Invoke-WebRequest -Uri $releaseUri -UseBasicParsing -OutFile $marketArchivePath
 
@@ -325,7 +371,7 @@ finally {
     Remove-Item -Path $workPath -Recurse -Force -ErrorAction 'SilentlyContinue'
 }
 
-Invoke-Spicetify "config" "custom_apps" "marketplace"
+Invoke-Spicetify "config" "custom_apps" "$appName"
 Invoke-Spicetify "config" "inject_css" "1" "replace_colors" "1"
 
 Write-Host -Object 'Downloading placeholder theme...' -ForegroundColor 'Cyan'
@@ -347,18 +393,18 @@ Write-Host -Object 'Applying...' -ForegroundColor 'Cyan'
 if ($KeepTheme) {
     $setTheme = $false
 }
-elseif ($isThemeInstalled -and ($currentTheme -ne 'marketplace')) {
+elseif ($isThemeInstalled -and ($currentTheme -ne $appName)) {
     $Host.UI.RawUI.Flushinputbuffer()
     $choice = $Host.UI.PromptForChoice(
         'Local theme found',
-        "Do you want to replace '$currentTheme' with a placeholder to install themes from the Marketplace?",
+        "Do you want to replace '$currentTheme' with a placeholder so themes can be installed from $appDisplayName`?",
         ('&Yes', '&No'),
         0
     )
     if ($choice -eq 1) { $setTheme = $false }
 }
 if ($setTheme) {
-    Invoke-Spicetify "config" "current_theme" "marketplace"
+    Invoke-Spicetify "config" "current_theme" "$appName"
 }
 Invoke-Spicetify "backup"
 Invoke-Spicetify "apply"

@@ -2,7 +2,7 @@ import { t } from "i18next";
 import React, { type Key } from "react";
 import { withTranslation } from "react-i18next";
 
-import { CUSTOM_APP_PATH, LOCALSTORAGE_KEYS, SNIPPETS_PAGE_URL } from "../../constants";
+import { APP_ID, APP_NAME, CUSTOM_APP_PATH, LOCALSTORAGE_KEYS, SESSION_KEYS, SNIPPETS_PAGE_URL, THEME_PLACEHOLDER_NAMES } from "../../constants";
 import { fetchGitHubJson } from "../../logic/GitHubApi";
 import { openModal } from "../../logic/LaunchModals";
 import { hasPendingChanges, notifyPendingChanges, wasLoadedThisSession } from "../../logic/PendingReload";
@@ -119,7 +119,7 @@ export class Card extends React.Component<
   mounted = false;
 
   handleOperationError(error: unknown) {
-    console.error(`Marketplace: could not update ${this.props.type} "${this.props.item.title}"`, error);
+    console.error(`${APP_NAME}: could not update ${this.props.type} "${this.props.item.title}"`, error);
     Spicetify.showNotification(t("notifications.marketplaceOperationError"), true);
   }
 
@@ -344,7 +344,7 @@ export class Card extends React.Component<
 
     let userCSS: string | undefined;
     if (!item.include?.length) {
-      const tld = window.sessionStorage.getItem("marketplace-request-tld") || undefined;
+      const tld = window.sessionStorage.getItem(SESSION_KEYS.requestTld) || undefined;
       userCSS = await parseCSS(item, tld);
     }
 
@@ -382,9 +382,9 @@ export class Card extends React.Component<
       this.props.updateColourSchemes(null, null);
 
       // @ts-expect-error: Cannot assign to 'current_theme' because it is a read-only property
-      Spicetify.Config.current_theme = "marketplace";
+      Spicetify.Config.current_theme = APP_ID;
       // @ts-expect-error: Cannot assign to 'color_scheme' because it is a read-only property
-      Spicetify.Config.color_scheme = "marketplace";
+      Spicetify.Config.color_scheme = APP_ID;
     }
 
     this.setState({ installed: true });
@@ -409,7 +409,7 @@ export class Card extends React.Component<
       }
 
       const localTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.localTheme);
-      if (localTheme && localTheme.toLowerCase() !== "marketplace") {
+      if (localTheme && !THEME_PLACEHOLDER_NAMES.includes(localTheme.toLowerCase())) {
         Spicetify.showNotification(t("notifications.wrongLocalTheme"), true, 5000);
         return;
       }
@@ -443,9 +443,9 @@ export class Card extends React.Component<
     this.props.updateColourSchemes(null, null);
 
     // @ts-expect-error: Cannot assign to 'current_theme' because it is a read-only property
-    Spicetify.Config.current_theme = "marketplace";
+    Spicetify.Config.current_theme = APP_ID;
     // @ts-expect-error: Cannot assign to 'color_scheme' because it is a read-only property
-    Spicetify.Config.color_scheme = "marketplace";
+    Spicetify.Config.color_scheme = APP_ID;
 
     this.setState({ installed: false });
   }

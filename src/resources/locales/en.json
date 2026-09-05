@@ -1,7 +1,7 @@
 {
   "translation": {
     "settings": {
-      "title": "Marketplace Settings",
+      "title": "7's Marketplace Settings",
       "optionsHeading": "Options",
       "starCountLabel": "Stars count",
       "tagsLabel": "Tags",
@@ -80,7 +80,7 @@
     },
     "updateModal": {
       "title": "Update the Marketplace",
-      "description": "Update Spicetify Marketplace to receive new features and bug fixes.",
+      "description": "Update 7's Marketplace to receive new features and bug fixes.",
       "currentVersion": "Current version: {{version}}",
       "latestVersion": "Latest version: {{version}}",
       "whatsChanged": "What's Changed",
@@ -89,7 +89,7 @@
       "viewGuide": "View guide"
     },
     "grid": {
-      "spicetifyMarketplace": "Spicetify Marketplace",
+      "spicetifyMarketplace": "7's Marketplace",
       "newUpdate": "New update",
       "addCSS": "Add CSS",
       "search": "Search",

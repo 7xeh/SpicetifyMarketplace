@@ -77,7 +77,7 @@
     },
     "updateModal": {
       "title": "Marketplace'i Güncelle",
-      "description": "Yeni özellikleri ve hata düzeltmelerini almak için Spicetify Marketplace'i güncelleyin.",
+      "description": "Yeni özellikleri ve hata düzeltmelerini almak için 7's Marketplace'i güncelleyin.",
       "currentVersion": "Mevcut sürüm: {{version}}",
       "latestVersion": "En son sürüm: {{version}}",
       "whatsChanged": "Neler Değişti",
@@ -86,7 +86,7 @@
       "viewGuide": "Rehberi görüntüle"
     },
     "grid": {
-      "spicetifyMarketplace": "Spicetify Marketplace",
+      "spicetifyMarketplace": "7's Marketplace",
       "newUpdate": "Yeni güncelleme",
       "addCSS": "CSS Ekle",
       "search": "Ara",

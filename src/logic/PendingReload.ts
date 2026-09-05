@@ -1,12 +1,6 @@
-import { LOCALSTORAGE_KEYS } from "../constants";
+import { APP_NAME, LOCALSTORAGE_KEYS, SESSION_KEYS } from "../constants";
 import { marketplaceStorage } from "./Storage";
 import { getLocalStorageDataFromKey, getStringArrayFromKey } from "./Utils";
-
-const SESSION_KEYS = {
-  ready: "marketplace:session:runtime-ready",
-  extensions: "marketplace:session:loaded-extensions",
-  themeScripts: "marketplace:session:loaded-theme-scripts"
-};
 
 export type LoadedEntry = {
   key: string;
@@ -39,29 +33,29 @@ function writeEntries(sessionKey: string, entries: LoadedEntry[]) {
   try {
     window.sessionStorage.setItem(sessionKey, JSON.stringify(entries));
   } catch (error) {
-    console.warn("Marketplace could not record its loaded runtime state", error);
+    console.warn(`${APP_NAME}: could not record the loaded runtime state`, error);
   }
 }
 
 export function recordLoadedExtensions(entries: LoadedEntry[]) {
-  writeEntries(SESSION_KEYS.extensions, entries);
+  writeEntries(SESSION_KEYS.loadedExtensions, entries);
 }
 
 export function recordLoadedThemeScripts(entries: LoadedEntry[]) {
-  writeEntries(SESSION_KEYS.themeScripts, entries);
+  writeEntries(SESSION_KEYS.loadedThemeScripts, entries);
 }
 
 export function markRuntimeLoaded() {
   try {
-    window.sessionStorage.setItem(SESSION_KEYS.ready, "1");
+    window.sessionStorage.setItem(SESSION_KEYS.runtimeReady, "1");
   } catch (error) {
-    console.warn("Marketplace could not record its loaded runtime state", error);
+    console.warn(`${APP_NAME}: could not record the loaded runtime state`, error);
   }
 }
 
 function isRuntimeLoaded() {
   try {
-    return window.sessionStorage.getItem(SESSION_KEYS.ready) === "1";
+    return window.sessionStorage.getItem(SESSION_KEYS.runtimeReady) === "1";
   } catch {
     return false;
   }
@@ -104,7 +98,7 @@ function diff(loaded: LoadedEntry[], current: LoadedEntry[]): PendingChange[] {
 }
 
 export function wasLoadedThisSession(key: string) {
-  return readEntries(SESSION_KEYS.extensions).some((entry) => entry.key === key);
+  return readEntries(SESSION_KEYS.loadedExtensions).some((entry) => entry.key === key);
 }
 
 export function getPendingChanges(): PendingChange[] {
@@ -114,7 +108,10 @@ export function getPendingChanges(): PendingChange[] {
     .filter((key) => marketplaceStorage.getItem(key) !== null)
     .map((key) => ({ key, title: titleForKey(key, key) }));
 
-  return [...diff(readEntries(SESSION_KEYS.extensions), installedExtensions), ...diff(readEntries(SESSION_KEYS.themeScripts), currentThemeScripts())];
+  return [
+    ...diff(readEntries(SESSION_KEYS.loadedExtensions), installedExtensions),
+    ...diff(readEntries(SESSION_KEYS.loadedThemeScripts), currentThemeScripts())
+  ];
 }
 
 export function hasPendingChanges() {
@@ -126,7 +123,7 @@ export function notifyPendingChanges() {
     try {
       listener();
     } catch (error) {
-      console.warn("Marketplace pending-reload listener failed", error);
+      console.warn(`${APP_NAME}: a pending-reload listener failed`, error);
     }
   }
 }

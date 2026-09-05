@@ -78,7 +78,7 @@
     },
     "updateModal": {
       "title": "Atualizar o Marketplace",
-      "description": "Atualize o Spicetify Marketplace para receber novos recursos e correções de bugs.",
+      "description": "Atualize o 7's Marketplace para receber novos recursos e correções de bugs.",
       "currentVersion": "Versão atual: {{version}}",
       "latestVersion": "Versão mais recente: {{version}}",
       "whatsChanged": "O que mudou",
@@ -87,7 +87,7 @@
       "viewGuide": "Ver guia"
     },
     "grid": {
-      "spicetifyMarketplace": "Spicetify Marketplace",
+      "spicetifyMarketplace": "7's Marketplace",
       "newUpdate": "Nova atualização",
       "addCSS": "Adicionar CSS",
       "search": "Buscar",

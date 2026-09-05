@@ -1,4 +1,6 @@
-const CACHE_PREFIX = "marketplace-cache:";
+import { APP_ID } from "../constants";
+
+const CACHE_PREFIX = `${APP_ID}-cache:`;
 const MAX_ENTRY_BYTES = 1_000_000;
 
 export const CACHE_TTL = {

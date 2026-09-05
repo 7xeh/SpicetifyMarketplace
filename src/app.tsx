@@ -6,7 +6,7 @@ import "./styles/styles.scss";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Grid from "./components/Grid";
 import ReadmePage from "./components/ReadmePage";
-import { ALL_TABS, CUSTOM_APP_PATH, LOCALSTORAGE_KEYS } from "./constants";
+import { ALL_TABS, CUSTOM_APP_PATH, LOCALSTORAGE_KEYS, settingKey } from "./constants";
 import { waitForSpicetify } from "./logic/SpicetifyReady";
 import { hydrateMarketplaceStorage, marketplaceStorage } from "./logic/Storage";
 import { getBooleanFromKey, getLocalStorageDataFromKey } from "./logic/Utils";
@@ -93,17 +93,17 @@ class App extends React.Component<
 
     const config = {
       visual: {
-        stars: getBooleanFromKey("marketplace:stars", true),
-        tags: getBooleanFromKey("marketplace:tags", true),
-        showArchived: getBooleanFromKey("marketplace:showArchived", false),
-        hideInstalled: getBooleanFromKey("marketplace:hideInstalled", false),
-        colorShift: getBooleanFromKey("marketplace:colorShift", false),
-        themeDevTools: getBooleanFromKey("marketplace:themeDevTools", false),
-        albumArtBasedColors: getBooleanFromKey("marketplace:albumArtBasedColors", false),
-        albumArtBasedColorsMode: getLocalStorageDataFromKey("marketplace:albumArtBasedColorsMode") || "monochrome-light",
-        albumArtBasedColorsVibrancy: getLocalStorageDataFromKey("marketplace:albumArtBasedColorsVibrancy") || "PROMINENT",
-        type: getBooleanFromKey("marketplace:type", false),
-        followers: getBooleanFromKey("marketplace:followers", false)
+        stars: getBooleanFromKey(settingKey("stars"), true),
+        tags: getBooleanFromKey(settingKey("tags"), true),
+        showArchived: getBooleanFromKey(settingKey("showArchived"), false),
+        hideInstalled: getBooleanFromKey(settingKey("hideInstalled"), false),
+        colorShift: getBooleanFromKey(settingKey("colorShift"), false),
+        themeDevTools: getBooleanFromKey(settingKey("themeDevTools"), false),
+        albumArtBasedColors: getBooleanFromKey(settingKey("albumArtBasedColors"), false),
+        albumArtBasedColorsMode: getLocalStorageDataFromKey(settingKey("albumArtBasedColorsMode")) || "monochrome-light",
+        albumArtBasedColorsVibrancy: getLocalStorageDataFromKey(settingKey("albumArtBasedColorsVibrancy")) || "PROMINENT",
+        type: getBooleanFromKey(settingKey("type"), false),
+        followers: getBooleanFromKey(settingKey("followers"), false)
       },
       tabs,
       activeTab: getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.activeTab, tabs[0]),

@@ -9,6 +9,10 @@ BRANCH="${MARKETPLACE_BRANCH:-main}"
 FROM_SOURCE="${MARKETPLACE_FROM_SOURCE:-0}"
 UNINSTALL_ONLY="${MARKETPLACE_UNINSTALL_ONLY:-0}"
 
+APP_NAME="sevens-marketplace"
+APP_DISPLAY_NAME="7's Marketplace"
+FORK_MARKER="7xeh/SpicetifyMarketplace"
+
 releases_uri="https://github.com/$REPO/releases"
 default_color_uri="https://raw.githubusercontent.com/$REPO/$BRANCH/resources/color.ini"
 
@@ -22,14 +26,41 @@ if [ -z "$SPICETIFY_CONFIG_DIR" ]; then
 	SPICETIFY_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/spicetify"
 fi
 INSTALL_DIR="$SPICETIFY_CONFIG_DIR/CustomApps"
-THEME_DIR="$SPICETIFY_CONFIG_DIR/Themes/marketplace"
+THEME_DIR="$SPICETIFY_CONFIG_DIR/Themes/$APP_NAME"
 
 current_theme=$(spicetify config current_theme 2>/dev/null || echo "")
 
-remove_existing_marketplace() {
+owned_by_this_fork() {
+	# Older builds of this fork installed themselves as 'marketplace', which is also the folder the
+	# official Spicetify Marketplace uses. Only reclaim that folder when it is demonstrably ours.
+	for file_name in README.md index.js extension.js; do
+		if [ -f "$1/$file_name" ] && grep -qF "$FORK_MARKER" "$1/$file_name" 2>/dev/null; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+owned_app_names() {
+	echo "$APP_NAME"
+	for app_name in marketplace spicetify-marketplace; do
+		if [ -d "$INSTALL_DIR/$app_name" ] && owned_by_this_fork "$INSTALL_DIR/$app_name"; then
+			echo "$app_name"
+		fi
+	done
+}
+
+remove_existing_install() {
 	found=0
+	owned=$(owned_app_names)
 
 	for app_name in marketplace spicetify-marketplace; do
+		if [ -d "$INSTALL_DIR/$app_name" ] && ! owned_by_this_fork "$INSTALL_DIR/$app_name"; then
+			echo "  - leaving the official Spicetify Marketplace alone: CustomApps/$app_name"
+		fi
+	done
+
+	for app_name in $owned; do
 		if [ -d "$INSTALL_DIR/$app_name" ]; then
 			echo "  - removing CustomApps/$app_name"
 			rm -rf "$INSTALL_DIR/$app_name"
@@ -41,7 +72,7 @@ remove_existing_marketplace() {
 	configured_apps=${configured_apps##*=}
 	configured_apps=$(echo "$configured_apps" | tr -d '[:space:]' | tr ',' '|')
 
-	for app_name in marketplace spicetify-marketplace; do
+	for app_name in $owned; do
 		case "|$configured_apps|" in
 		*"|$app_name|"*)
 			echo "  - removing '$app_name' from custom_apps"
@@ -53,7 +84,7 @@ remove_existing_marketplace() {
 
 	if [ -d "$THEME_DIR" ]; then
 		echo "  - removing stale placeholder theme"
-		if [ "$current_theme" = "marketplace" ]; then
+		if [ "$current_theme" = "$APP_NAME" ]; then
 			rm -f "$THEME_DIR/user.css"
 		else
 			rm -rf "$THEME_DIR"
@@ -127,12 +158,12 @@ build_from_source() {
 }
 
 echo "SOURCE $REPO ($BRANCH)"
-echo "CHECKING FOR AN EXISTING MARKETPLACE"
-remove_existing_marketplace
+echo "CHECKING FOR AN EXISTING $APP_DISPLAY_NAME"
+remove_existing_install
 
 if [ "$UNINSTALL_ONLY" = "1" ]; then
 	spicetify apply
-	echo "Marketplace has been removed."
+	echo "$APP_DISPLAY_NAME has been removed."
 	echo "Its settings and installed items live inside Spotify and are not touched by this script."
 	exit 0
 fi
@@ -167,8 +198,8 @@ else
 fi
 
 echo "COPYING"
-mkdir -p "$INSTALL_DIR/marketplace"
-cp -R "$DIST_DIR/." "$INSTALL_DIR/marketplace/"
+mkdir -p "$INSTALL_DIR/$APP_NAME"
+cp -R "$DIST_DIR/." "$INSTALL_DIR/$APP_NAME/"
 
 echo "INSTALLING"
 
@@ -176,8 +207,8 @@ echo "INSTALLING"
 spicetify config inject_css 1
 spicetify config replace_colors 1
 
-if [ ${#current_theme} -le 3 ] || [ "$current_theme" = "marketplace" ]; then
-	echo "Using placeholder theme so Marketplace themes can be installed"
+if [ ${#current_theme} -le 3 ] || [ "$current_theme" = "$APP_NAME" ] || [ "$current_theme" = "marketplace" ]; then
+	echo "Using a placeholder theme so themes can be installed from $APP_DISPLAY_NAME"
 	if [ ! -d "$THEME_DIR" ]; then
 		echo "MAKING FOLDER  $THEME_DIR"
 		mkdir -p "$THEME_DIR"
@@ -187,16 +218,16 @@ if [ ${#current_theme} -le 3 ] || [ "$current_theme" = "marketplace" ]; then
 		curl --fail --location --progress-bar --output "$THEME_DIR/color.ini" \
 			"https://raw.githubusercontent.com/spicetify/marketplace/main/resources/color.ini"
 	fi
-	spicetify config current_theme marketplace
+	spicetify config current_theme "$APP_NAME"
 fi
 
-if spicetify config custom_apps marketplace; then
+if spicetify config custom_apps "$APP_NAME"; then
 	echo "Added to config!"
 	echo "APPLYING"
 	spicetify apply
-	echo "Installed $REPO ($BRANCH) into $INSTALL_DIR/marketplace"
+	echo "Installed $REPO ($BRANCH) into $INSTALL_DIR/$APP_NAME"
 else
 	echo "Command failed"
-	echo "Please run \`spicetify config custom_apps marketplace\` manually "
+	echo "Please run \`spicetify config custom_apps $APP_NAME\` manually "
 	echo "Next run \`spicetify apply\`"
 fi

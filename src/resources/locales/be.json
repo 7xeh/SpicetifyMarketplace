@@ -78,7 +78,7 @@
     },
     "updateModal": {
       "title": "Абнаўленне Marketplace",
-      "description": "Абнавіце Spicetify Marketplace для атрыманія новых функцыі і выпраўленні памылак.",
+      "description": "Абнавіце 7's Marketplace для атрыманія новых функцыі і выпраўленні памылак.",
       "currentVersion": "Сучасная версія: {{version}}",
       "latestVersion": "Апошняя версія: {{version}}",
       "whatsChanged": "Што зменено",
@@ -87,7 +87,7 @@
       "viewGuide": "Прасматрець гайд"
     },
     "grid": {
-      "spicetifyMarketplace": "Spicetify Marketplace",
+      "spicetifyMarketplace": "7's Marketplace",
       "newUpdate": "Новае абнаўленне",
       "addCSS": "Дабавіць CSS",
       "search": "Пошук",

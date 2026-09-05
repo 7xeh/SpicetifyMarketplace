@@ -1,11 +1,11 @@
 import { t } from "i18next";
 
-import { ITEMS_PER_REQUEST, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../constants";
+import { APP_NAME, ITEMS_PER_REQUEST, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION, SESSION_KEYS, THEME_PLACEHOLDER_NAMES } from "../constants";
 import { fetchAppManifest, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
 import { isGitHubRateLimited } from "../logic/GitHubApi";
 import { type LoadedEntry, markRuntimeLoaded, recordLoadedExtensions, recordLoadedThemeScripts } from "../logic/PendingReload";
 import { clearRequestCache, pruneRequestCache } from "../logic/RequestCache";
-import { hydrateMarketplaceStorage, marketplaceStorage } from "../logic/Storage";
+import { hydrateMarketplaceStorage, marketplaceStorage, reimportSpicetifyMarketplaceData } from "../logic/Storage";
 import {
   addExtensionToSpicetifyConfig,
   clearMarketplaceSessionCache,
@@ -21,7 +21,9 @@ import {
   injectUserCSS,
   isGithubRawUrl,
   parseCSS,
-  resetMarketplace
+  resetMarketplace,
+  THEME_CSS_CLASS,
+  THEME_SCRIPT_CLASS
 } from "../logic/Utils";
 import type { RepoType } from "../types/marketplace-types";
 
@@ -43,7 +45,7 @@ async function pruneOrphanedInstallKeys() {
 
   if (!Object.keys(orphans).length && !themeIsOrphaned) return;
 
-  console.warn("Marketplace: dropping install entries that have no stored data", { orphans, themeIsOrphaned });
+  console.warn(`${APP_NAME}: dropping install entries that have no stored data`, { orphans, themeIsOrphaned });
 
   await marketplaceStorage.mutateAsync((storage) => {
     for (const [listKey, kept] of Object.entries(orphans)) storage.set(listKey, JSON.stringify(kept));
@@ -61,24 +63,25 @@ async function pruneOrphanedInstallKeys() {
   reactSimpleCodeEditorFix.innerHTML = "const global = globalThis;";
   document.body.appendChild(reactSimpleCodeEditorFix);
 
-  console.log(`Initializing Spicetify Marketplace v${MARKETPLACE_VERSION}`);
+  console.log(`Initializing ${APP_NAME} v${MARKETPLACE_VERSION}`);
   try {
     await hydrateMarketplaceStorage();
   } catch (error) {
     // The installed lists are unknown here, so loading nothing is safer than
     // rebuilding Spicetify's config from an empty view.
-    console.error("Marketplace storage could not be read", error);
+    console.error(`${APP_NAME}: storage could not be read`, error);
     Spicetify.showNotification(t("notifications.storageUnreadable"), true, 5000);
     return;
   }
 
-  window.Marketplace = {
+  window.SevensMarketplace = {
     reset: resetMarketplace,
     export: exportMarketplace,
+    importFromSpicetifyMarketplace: reimportSpicetifyMarketplaceData,
     clearCache: () => {
       clearRequestCache();
       clearMarketplaceSessionCache();
-      console.log("Marketplace cache cleared, reload to refetch");
+      console.log(`${APP_NAME}: cache cleared, reload to refetch`);
     },
     version: MARKETPLACE_VERSION
   };
@@ -136,14 +139,14 @@ async function pruneOrphanedInstallKeys() {
       console.warn("No schemes found for theme");
     }
 
-    const existingMarketplaceThemeCSS = document.querySelector("link.marketplaceCSS");
+    const existingMarketplaceThemeCSS = document.querySelector(`link.${THEME_CSS_CLASS}`);
     if (existingMarketplaceThemeCSS) existingMarketplaceThemeCSS.remove();
 
     try {
       const userCSS = await parseCSS(themeManifest, tld);
       injectUserCSS(userCSS);
     } catch (error) {
-      console.error("Marketplace: could not load the installed theme's CSS", error);
+      console.error(`${APP_NAME}: could not load the installed theme's CSS`, error);
       Spicetify.showNotification(t("notifications.themeInstallationError"), true, 5000);
     }
 
@@ -167,7 +170,7 @@ async function pruneOrphanedInstallKeys() {
           if (filePath.endsWith(".mjs")) newScript.type = "module";
         }
         newScript.src = `${src}?time=${Date.now()}`;
-        newScript.classList.add("marketplaceScript");
+        newScript.classList.add(THEME_SCRIPT_CLASS);
         document.body.appendChild(newScript);
 
         addExtensionToSpicetifyConfig(script);
@@ -178,7 +181,7 @@ async function pruneOrphanedInstallKeys() {
     recordLoadedThemeScripts(loadedThemeScripts);
   };
 
-  console.log("Loaded Marketplace extension");
+  console.log(`Loaded the ${APP_NAME} extension`);
 
   await pruneOrphanedInstallKeys();
 
@@ -197,7 +200,7 @@ async function pruneOrphanedInstallKeys() {
     return;
   }
 
-  window.sessionStorage.setItem("marketplace-request-tld", tld);
+  window.sessionStorage.setItem(SESSION_KEYS.requestTld, tld);
 
   const installedExtensions = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedExtensions);
   const loadedExtensions: LoadedEntry[] = [];
@@ -212,7 +215,7 @@ async function pruneOrphanedInstallKeys() {
   marketplaceStorage.setItem(LOCALSTORAGE_KEYS.localTheme, localTheme);
   const installedTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
   if (installedTheme) {
-    if (localTheme && localTheme.toLocaleLowerCase() !== "marketplace") {
+    if (localTheme && !THEME_PLACEHOLDER_NAMES.includes(localTheme.toLocaleLowerCase())) {
       Spicetify.showNotification(t("notifications.wrongLocalTheme"), true, 5000);
       return;
     }
@@ -220,15 +223,15 @@ async function pruneOrphanedInstallKeys() {
   }
 
   markRuntimeLoaded();
-})().catch((error) => console.error("Marketplace: failed to initialise the extension", error));
+})().catch((error) => console.error(`${APP_NAME}: failed to initialise the extension`, error));
 
 async function queryRepos(type: RepoType, pageNum = 1) {
   let BLACKLIST: string[] = [];
   try {
-    const stored = JSON.parse(window.sessionStorage.getItem("marketplace:blacklist") || "[]");
+    const stored = JSON.parse(window.sessionStorage.getItem(SESSION_KEYS.blacklist) || "[]");
     if (Array.isArray(stored)) BLACKLIST = stored;
   } catch (error) {
-    console.warn("Marketplace: could not read the cached blacklist", error);
+    console.warn(`${APP_NAME}: could not read the cached blacklist`, error);
   }
 
   return getTaggedRepos(`spicetify-${type}s`, pageNum, BLACKLIST, true);
@@ -257,10 +260,10 @@ async function loadPageRecursive(type: RepoType, pageNum: number) {
   clearMarketplaceSessionCache();
   pruneRequestCache(MAX_CACHE_AGE_MS);
   const BLACKLIST = await getBlacklist();
-  window.sessionStorage.setItem("marketplace:blacklist", JSON.stringify(BLACKLIST));
+  window.sessionStorage.setItem(SESSION_KEYS.blacklist, JSON.stringify(BLACKLIST));
 
   await Promise.all([loadPageRecursive("extension", 0), loadPageRecursive("theme", 0), loadPageRecursive("app", 0)]);
-})().catch((error) => console.error("Marketplace: failed to preload repos", error));
+})().catch((error) => console.error(`${APP_NAME}: failed to preload repos`, error));
 
 async function appendInformationToLocalStorage(array, type: RepoType) {
   if (!Array.isArray(array?.items)) return;

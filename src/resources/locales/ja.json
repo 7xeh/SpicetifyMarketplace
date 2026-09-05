@@ -77,7 +77,7 @@
     },
     "updateModal": {
       "title": "マーケットプレイスの更新",
-      "description": "新機能やバグ修正を受け取るために、Spicetify Marketplaceを更新してください。",
+      "description": "新機能やバグ修正を受け取るために、7's Marketplaceを更新してください。",
       "currentVersion": "現在のバージョン: {{version}}",
       "latestVersion": "最新のバージョン: {{version}}",
       "whatsChanged": "変更内容",
@@ -86,7 +86,7 @@
       "viewGuide": "ガイドを見る"
     },
     "grid": {
-      "spicetifyMarketplace": "Spicetify Marketplace",
+      "spicetifyMarketplace": "7's Marketplace",
       "newUpdate": "新しいアップデート",
       "addCSS": "CSSを追加",
       "search": "検索",

@@ -1,8 +1,11 @@
-const DATABASE_NAME = "spicetify-marketplace";
+import { APP_ID, APP_NAME, STORAGE_PREFIX } from "../constants";
+
+const DATABASE_NAME = APP_ID;
 const DATABASE_VERSION = 1;
 const STORE_NAME = "settings";
-const MARKETPLACE_KEY_PREFIX = "marketplace:";
-const LOCAL_STORAGE_MIGRATION_KEY = "spicetify-marketplace:internal:local-storage-migrated";
+const UPSTREAM_DATABASE_NAMES = ["spicetify-marketplace"];
+const IMPORT_MARKER_KEY = `${APP_ID}:internal:imported`;
+const FALLBACK_PREFIX = `${APP_ID}:fallback:`;
 const HYDRATION_RETRY_DELAYS_MS = [150, 400, 1000];
 
 type StoredRecord = {
@@ -16,6 +19,11 @@ export type StorageDraft = {
   set(key: string, value: string): void;
   delete(key: string): void;
   keys(): string[];
+};
+
+export type ImportResult = {
+  source: string;
+  count: number;
 };
 
 const MAX_FLUSH_ROUNDS = 10;
@@ -35,36 +43,43 @@ function trackWrite<T>(write: Promise<T>) {
 }
 
 function isMarketplaceKey(key: string) {
-  return key.startsWith(MARKETPLACE_KEY_PREFIX);
+  return key.startsWith(STORAGE_PREFIX);
+}
+
+function openNamedDatabase(name: string, version?: number, upgrade?: (database: IDBDatabase) => void) {
+  return new Promise<IDBDatabase | null>((resolve) => {
+    if (!window.indexedDB) {
+      resolve(null);
+      return;
+    }
+
+    let request: IDBOpenDBRequest;
+    try {
+      request = version === undefined ? window.indexedDB.open(name) : window.indexedDB.open(name, version);
+    } catch (error) {
+      console.warn(`${APP_NAME}: could not open the ${name} database`, error);
+      resolve(null);
+      return;
+    }
+
+    request.onupgradeneeded = () => upgrade?.(request.result);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => {
+      console.warn(`${APP_NAME}: the ${name} database is unavailable`, request.error);
+      resolve(null);
+    };
+    request.onblocked = () => resolve(null);
+  });
 }
 
 function openDatabase() {
   if (databasePromise) return databasePromise;
 
-  databasePromise = new Promise((resolve) => {
-    if (!window.indexedDB) {
-      databaseUnavailable = true;
-      resolve(null);
-      return;
-    }
-
-    const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME, { keyPath: "key" });
-    };
-
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => {
-      console.warn("Marketplace IndexedDB storage unavailable", request.error);
-      databaseUnavailable = true;
-      resolve(null);
-    };
-    request.onblocked = () => {
-      databaseUnavailable = true;
-      resolve(null);
-    };
+  databasePromise = openNamedDatabase(DATABASE_NAME, DATABASE_VERSION, (database) => {
+    if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME, { keyPath: "key" });
+  }).then((database) => {
+    if (!database) databaseUnavailable = true;
+    return database;
   });
 
   return databasePromise;
@@ -86,25 +101,25 @@ async function runTransaction(mode: IDBTransactionMode, run: (store: IDBObjectSt
     try {
       transaction = database.transaction(STORE_NAME, mode);
     } catch (error) {
-      console.warn("Marketplace IndexedDB transaction could not be opened", error);
+      console.warn(`${APP_NAME}: the storage transaction could not be opened`, error);
       settle(false);
       return;
     }
 
     transaction.oncomplete = () => settle(true);
     transaction.onerror = () => {
-      console.warn("Marketplace IndexedDB transaction failed", transaction.error);
+      console.warn(`${APP_NAME}: the storage transaction failed`, transaction.error);
       settle(false);
     };
     transaction.onabort = () => {
-      console.warn("Marketplace IndexedDB transaction aborted", transaction.error);
+      console.warn(`${APP_NAME}: the storage transaction was aborted`, transaction.error);
       settle(false);
     };
 
     try {
       run(transaction.objectStore(STORE_NAME));
     } catch (error) {
-      console.warn("Marketplace IndexedDB request failed", error);
+      console.warn(`${APP_NAME}: the storage request failed`, error);
       try {
         transaction.abort();
       } catch {
@@ -114,28 +129,75 @@ async function runTransaction(mode: IDBTransactionMode, run: (store: IDBObjectSt
   });
 }
 
-function readAllRecords(): Promise<StoredRecord[] | null> {
-  return openDatabase().then((database) => {
-    if (!database) return null;
+function readAllFrom(database: IDBDatabase): Promise<StoredRecord[]> {
+  return new Promise((resolve, reject) => {
+    if (!database.objectStoreNames.contains(STORE_NAME)) {
+      resolve([]);
+      return;
+    }
 
-    return new Promise<StoredRecord[] | null>((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, "readonly");
-      const request = transaction.objectStore(STORE_NAME).getAll();
+    const transaction = database.transaction(STORE_NAME, "readonly");
+    const request = transaction.objectStore(STORE_NAME).getAll();
 
-      request.onsuccess = () => resolve((request.result as StoredRecord[]) ?? []);
-      request.onerror = () => reject(request.error ?? new Error("Marketplace IndexedDB read failed"));
-      transaction.onabort = () => reject(transaction.error ?? new Error("Marketplace IndexedDB read aborted"));
-    });
+    request.onsuccess = () => resolve((request.result as StoredRecord[]) ?? []);
+    request.onerror = () => reject(request.error ?? new Error("Storage read failed"));
+    transaction.onabort = () => reject(transaction.error ?? new Error("Storage read aborted"));
   });
+}
+
+async function readAllRecords(): Promise<StoredRecord[] | null> {
+  const database = await openDatabase();
+  if (!database) return null;
+  return readAllFrom(database);
+}
+
+function readLocalStorageFallback(): StoredRecord[] {
+  const records: StoredRecord[] = [];
+
+  try {
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index);
+      if (!key?.startsWith(FALLBACK_PREFIX)) continue;
+
+      const value = window.localStorage.getItem(key);
+      if (value !== null) records.push({ key: key.slice(FALLBACK_PREFIX.length), value });
+    }
+  } catch (error) {
+    console.warn(`${APP_NAME}: the localStorage fallback could not be read`, error);
+  }
+
+  return records;
 }
 
 function writeLocalStorageFallback(updates: StoredRecord[], removals: string[]) {
   try {
-    for (const { key, value } of updates) window.localStorage.setItem(key, value);
-    for (const key of removals) window.localStorage.removeItem(key);
+    for (const { key, value } of updates) window.localStorage.setItem(`${FALLBACK_PREFIX}${key}`, value);
+    for (const key of removals) window.localStorage.removeItem(`${FALLBACK_PREFIX}${key}`);
   } catch (error) {
-    console.warn("Marketplace localStorage fallback failed", error);
+    console.warn(`${APP_NAME}: the localStorage fallback could not be written`, error);
   }
+}
+
+function clearLocalStorageFallback(keys: string[]) {
+  try {
+    for (const key of keys) window.localStorage.removeItem(`${FALLBACK_PREFIX}${key}`);
+  } catch (error) {
+    console.warn(`${APP_NAME}: the localStorage fallback could not be cleared`, error);
+  }
+}
+
+async function drainLocalStorageFallback() {
+  const records = readLocalStorageFallback();
+  if (!records.length) return;
+
+  for (const { key, value } of records) cache.set(key, value);
+  if (databaseUnavailable) return;
+
+  const persisted = await runTransaction("readwrite", (store) => {
+    for (const record of records) store.put(record);
+  });
+
+  if (persisted) clearLocalStorageFallback(records.map((record) => record.key));
 }
 
 async function persistChanges(updates: StoredRecord[], removals: string[]) {
@@ -200,57 +262,75 @@ async function loadIndexedDBCache() {
   const records = await readAllRecords();
   if (!records) return false;
 
-  let migrationComplete = false;
-  for (const record of records) {
-    if (record.key === LOCAL_STORAGE_MIGRATION_KEY) {
-      migrationComplete = true;
-      cache.set(record.key, record.value);
-      continue;
-    }
-
-    cache.set(record.key, record.value);
-  }
-
-  return migrationComplete;
+  for (const record of records) cache.set(record.key, record.value);
+  return cache.has(IMPORT_MARKER_KEY);
 }
 
-async function migrateLocalStorage(migrationComplete: boolean) {
-  const legacyKeys: string[] = [];
+async function databaseExists(name: string) {
+  const list = (window.indexedDB as IDBFactory & { databases?: () => Promise<{ name?: string }[]> })?.databases;
+  if (typeof list !== "function") return true;
+
+  try {
+    return (await list.call(window.indexedDB)).some((entry) => entry.name === name);
+  } catch {
+    return true;
+  }
+}
+
+async function readUpstreamDatabase(name: string): Promise<StoredRecord[]> {
+  if (!(await databaseExists(name))) return [];
+
+  const database = await openNamedDatabase(name);
+  if (!database) return [];
+
+  try {
+    return (await readAllFrom(database)).filter((record) => isMarketplaceKey(record.key));
+  } catch (error) {
+    console.warn(`${APP_NAME}: could not read the ${name} database`, error);
+    return [];
+  } finally {
+    database.close();
+  }
+}
+
+function readUpstreamLocalStorage(): StoredRecord[] {
   const records: StoredRecord[] = [];
 
-  for (let index = 0; index < window.localStorage.length; index++) {
-    const key = window.localStorage.key(index);
-    if (!key || !isMarketplaceKey(key)) continue;
+  try {
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index);
+      if (!key || !isMarketplaceKey(key)) continue;
 
-    legacyKeys.push(key);
-    if (migrationComplete || cache.has(key)) continue;
-
-    const value = window.localStorage.getItem(key);
-    if (value !== null) records.push({ key, value });
-  }
-
-  if (!legacyKeys.length && migrationComplete) return;
-
-  for (const { key, value } of records) cache.set(key, value);
-
-  if (databaseUnavailable) return;
-
-  const persisted = await runTransaction("readwrite", (store) => {
-    for (const record of records) store.put(record);
-    store.put({ key: LOCAL_STORAGE_MIGRATION_KEY, value: "1" });
-  });
-
-  if (!persisted) return;
-
-  cache.set(LOCAL_STORAGE_MIGRATION_KEY, "1");
-
-  for (const key of legacyKeys) {
-    try {
-      window.localStorage.removeItem(key);
-    } catch (error) {
-      console.warn(`Marketplace could not remove the migrated key ${key}`, error);
+      const value = window.localStorage.getItem(key);
+      if (value !== null) records.push({ key, value });
     }
+  } catch (error) {
+    console.warn(`${APP_NAME}: could not read the Spicetify Marketplace localStorage data`, error);
   }
+
+  return records;
+}
+
+async function findUpstreamData(): Promise<ImportResult & { records: StoredRecord[] }> {
+  for (const name of UPSTREAM_DATABASE_NAMES) {
+    const records = await readUpstreamDatabase(name);
+    if (records.length) return { source: `IndexedDB "${name}"`, count: records.length, records };
+  }
+
+  const records = readUpstreamLocalStorage();
+  return { source: "localStorage", count: records.length, records };
+}
+
+async function importUpstreamData(overwrite: boolean): Promise<ImportResult> {
+  const { source, records } = await findUpstreamData();
+  const imported = overwrite ? records : records.filter((record) => !cache.has(record.key));
+
+  for (const { key, value } of imported) cache.set(key, value);
+
+  await persistChanges([...imported, { key: IMPORT_MARKER_KEY, value: "1" }], []);
+  cache.set(IMPORT_MARKER_KEY, "1");
+
+  return { source, count: imported.length };
 }
 
 export async function hydrateMarketplaceStorage() {
@@ -258,21 +338,28 @@ export async function hydrateMarketplaceStorage() {
   if (hydrationPromise) return hydrationPromise;
 
   hydrationPromise = (async () => {
-    let migrationComplete = false;
+    let alreadyImported = false;
 
     for (let attempt = 0; ; attempt++) {
       try {
-        migrationComplete = await loadIndexedDBCache();
+        alreadyImported = await loadIndexedDBCache();
         break;
       } catch (error) {
         if (attempt >= HYDRATION_RETRY_DELAYS_MS.length) throw error;
-        console.warn("Marketplace storage hydration failed, retrying", error);
+        console.warn(`${APP_NAME}: storage hydration failed, retrying`, error);
         databasePromise = null;
         await new Promise((resolve) => setTimeout(resolve, HYDRATION_RETRY_DELAYS_MS[attempt]));
       }
     }
 
-    await migrateLocalStorage(migrationComplete);
+    await drainLocalStorageFallback();
+    alreadyImported = cache.has(IMPORT_MARKER_KEY);
+
+    if (!alreadyImported) {
+      const { source, count } = await importUpstreamData(false);
+      if (count) console.log(`${APP_NAME}: imported ${count} entries from Spicetify Marketplace (${source}). The original data was left untouched.`);
+    }
+
     hydrated = true;
   })();
 
@@ -282,6 +369,12 @@ export async function hydrateMarketplaceStorage() {
     hydrationPromise = null;
     throw error;
   }
+}
+
+export async function reimportSpicetifyMarketplaceData() {
+  const result = await enqueue(() => importUpstreamData(true));
+  console.log(`${APP_NAME}: re-imported ${result.count} entries from Spicetify Marketplace (${result.source})`);
+  return result;
 }
 
 export const marketplaceStorage = {
@@ -314,7 +407,7 @@ export const marketplaceStorage = {
       await Promise.allSettled([...pendingWrites]);
     }
 
-    if (pendingWrites.size) console.warn(`Marketplace: ${pendingWrites.size} storage writes did not settle before flushing`);
+    if (pendingWrites.size) console.warn(`${APP_NAME}: ${pendingWrites.size} storage writes did not settle before flushing`);
   },
 
   keys() {
