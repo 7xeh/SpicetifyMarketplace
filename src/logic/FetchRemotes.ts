@@ -1,7 +1,7 @@
 import { t } from "i18next";
 
 import { BLACKLIST_URL, ITEMS_PER_REQUEST, SNIPPETS_URL } from "../constants";
-import type { CardItem, RepoTopic, Snippet } from "../types/marketplace-types";
+import type { CardItem, CardType, RepoTopic, Snippet } from "../types/marketplace-types";
 import { fetchGitHubJson, fetchJsonResource } from "./GitHubApi";
 import { CACHE_TTL, readCache, writeCache } from "./RequestCache";
 import { manifestSchema, snippetSchema } from "./Schemas";
@@ -100,11 +100,11 @@ async function fetchRepoManifest(url: string) {
   });
 }
 
-async function getRepoManifest(user: string, repo: string, branch: string): Promise<ParsedManifest[]> {
+async function getRepoManifest(user: string, repo: string, branch: string, forceRefresh = false): Promise<ParsedManifest[]> {
   const cacheKey = `manifest:${user}/${repo}@${branch}`;
   const cached = readCache<ParsedManifest[]>(cacheKey);
 
-  if (cached && Array.isArray(cached.value)) {
+  if (!forceRefresh && cached && Array.isArray(cached.value)) {
     const ttl = cached.value.length ? CACHE_TTL.manifest : CACHE_TTL.repo;
     if (cached.age <= ttl) return cached.value;
   }
@@ -130,13 +130,13 @@ async function getRepoManifest(user: string, repo: string, branch: string): Prom
   return parsedManifests;
 }
 
-export async function fetchExtensionManifest(contents_url: string, branch: string, stars: number, hideInstalled = false) {
+export async function fetchExtensionManifest(contents_url: string, branch: string, stars: number, hideInstalled = false, forceRefresh = false) {
   try {
     const regex_result = contents_url.match(/https:\/\/api\.github\.com\/repos\/(?<user>.+)\/(?<repo>.+)\/contents/);
     if (!regex_result?.groups) return null;
     const { user, repo } = regex_result.groups;
 
-    const manifests = await getRepoManifest(user, repo, branch);
+    const manifests = await getRepoManifest(user, repo, branch, forceRefresh);
 
     const parsedManifests: CardItem[] = (manifests as ReturnType<typeof JSON.parse>[]).reduce((accum, manifest) => {
       if (manifest?.name && manifest.description && manifest.main) {
@@ -176,13 +176,13 @@ export async function fetchExtensionManifest(contents_url: string, branch: strin
   }
 }
 
-export async function fetchThemeManifest(contents_url: string, branch: string, stars: number) {
+export async function fetchThemeManifest(contents_url: string, branch: string, stars: number, forceRefresh = false) {
   try {
     const regex_result = contents_url.match(/https:\/\/api\.github\.com\/repos\/(?<user>.+)\/(?<repo>.+)\/contents/);
     if (!regex_result?.groups) return null;
     const { user, repo } = regex_result.groups;
 
-    const manifests = await getRepoManifest(user, repo, branch);
+    const manifests = await getRepoManifest(user, repo, branch, forceRefresh);
 
     const parsedManifests: CardItem[] = (manifests as ReturnType<typeof JSON.parse>[]).reduce((accum, manifest) => {
       if (manifest?.name && manifest?.usercss && manifest?.description) {
@@ -225,13 +225,13 @@ export async function fetchThemeManifest(contents_url: string, branch: string, s
   }
 }
 
-export async function fetchAppManifest(contents_url: string, branch: string, stars: number) {
+export async function fetchAppManifest(contents_url: string, branch: string, stars: number, forceRefresh = false) {
   try {
     const regex_result = contents_url.match(/https:\/\/api\.github\.com\/repos\/(?<user>.+)\/(?<repo>.+)\/contents/);
     if (!regex_result?.groups) return null;
     const { user, repo } = regex_result.groups;
 
-    const manifests = await getRepoManifest(user, repo, branch);
+    const manifests = await getRepoManifest(user, repo, branch, forceRefresh);
 
     const parsedManifests: CardItem[] = (manifests as ReturnType<typeof JSON.parse>[]).reduce((accum, manifest) => {
       if (manifest?.name && manifest.description && !manifest.main && !manifest.usercss) {
@@ -263,6 +263,28 @@ export async function fetchAppManifest(contents_url: string, branch: string, sta
     return parsedManifests;
   } catch {
     return null;
+  }
+}
+
+export async function fetchRepoCardItems(
+  type: CardType,
+  user: string,
+  repo: string,
+  branch: string,
+  stars: number,
+  forceRefresh = true
+): Promise<CardItem[] | null> {
+  const contentsUrl = `https://api.github.com/repos/${user}/${repo}/contents`;
+
+  switch (type) {
+    case "extension":
+      return fetchExtensionManifest(contentsUrl, branch, stars, false, forceRefresh);
+    case "theme":
+      return fetchThemeManifest(contentsUrl, branch, stars, forceRefresh);
+    case "app":
+      return fetchAppManifest(contentsUrl, branch, stars, forceRefresh);
+    default:
+      return null;
   }
 }
 

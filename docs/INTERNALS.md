@@ -376,19 +376,45 @@ never returns a next-page number.
 method reads storage live; the state field exists only to trigger re-renders. After a re-render the
 state value goes stale, so anything that must be correct calls the method.
 
-`this.tags` is copied out of `props.item.tags` rather than used directly. Pushing the synthetic
-"external JS" and "archived" tags onto the prop array would mutate the shared item and duplicate
-those tags on every re-render.
+The card renders from `state.item`, not `props.item`. On the "Installed" tab the prop is the
+snapshot storage holds, and refreshing it has to change what is on screen without waiting for the
+grid to re-read storage.
 
-Installing writes a snapshot of the card's props into storage under `generateKey()`, then appends
-the key to the relevant installed list. Uninstalling reverses it, list first.
+`buildTags()` copies `item.tags` rather than using it directly. Pushing the synthetic "external JS"
+and "archived" tags onto the item's own array would mutate the shared object and duplicate those
+tags on every re-render.
 
-On the "Installed" tab each card re-checks its repo on mount for a new `pushed_at`, and if the repo
-has been pushed to since, silently reinstalls to pull the update. This goes through the rate-limit-
-aware fetcher; a naive `fetch` per card exhausts the GitHub budget as soon as the user has a handful
-of items installed.
+Installing writes a snapshot of the card's item into storage under `generateKey()`, then appends the
+key to the relevant installed list, both in one transaction. Uninstalling reverses it.
 
-Theme installs are gated on `config-xpui.ini` having `current_theme = marketplace`. Without it
+### Refreshing an installed card
+
+On the "Installed" tab each card re-checks its repo on mount for a new `pushed_at`. This goes
+through the rate-limit-aware fetcher; a naive `fetch` per card exhausts the GitHub budget as soon as
+the user has a handful of items installed.
+
+If the repo has been pushed since, `refreshFromRepo()` re-reads `manifest.json` with the manifest
+cache bypassed and matches the entry whose `generateKey()` equals this card's storage key. That
+match is on `manifest.main` (or `usercss`), so a repo that changes its preview image, description or
+tags still resolves; one that renames its entry point does not, and the stored copy is kept, because
+that is a different item.
+
+The fresh item is then handed to `installExtension()` / `installTheme()` **as an argument**. It
+cannot be read back from `this.state` on the next line — `setState` does not apply before the caller
+continues — and reading the stale state was the original bug: the reinstall re-serialised the
+snapshot it already had, so the stored `lastUpdated` never advanced, `hasNewUpdate` stayed true
+forever, and the preview, description and tags on the Installed tab were frozen at install time
+while the same extension showed correctly on the Extensions tab.
+
+When the manifest cannot be re-read at all, the stored item is reused but with the new `pushed_at`
+written onto it anyway. Otherwise the check never settles and repeats on every mount.
+
+`recoverFromBrokenImage()` covers the other direction: a stored preview URL that 404s even though the
+repo has not been pushed since, which happens when the manifest was read from a stale cache. The
+`onError` handler triggers one refresh per card, guarded by `recoveredBrokenImage`, and only writes
+when the URL actually changed.
+
+Theme installs are gated on `config-xpui.ini` naming one of `THEME_PLACEHOLDER_NAMES`. Without it
 Spicetify overwrites `user.css` and the theme silently does not apply, so the install is refused
 with a notification. The check is skipped when the local theme is unknown rather than assuming the
 worst.
