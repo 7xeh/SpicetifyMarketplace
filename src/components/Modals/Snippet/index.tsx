@@ -7,7 +7,14 @@ import "prismjs/components/prism-css";
 import { LOCALSTORAGE_KEYS } from "../../../constants";
 import type { ModalType } from "../../../logic/LaunchModals";
 import { marketplaceStorage } from "../../../logic/Storage";
-import { fileToBase64, getLocalStorageDataFromKey, getStringArrayFromKey, initializeSnippets } from "../../../logic/Utils";
+import {
+  fileToBase64,
+  getLocalStorageDataFromKey,
+  getStringArrayFromKey,
+  initializeSnippets,
+  processSnippetName,
+  snippetStorageKey
+} from "../../../logic/Utils";
 import Button from "../../Button";
 import type { CardProps } from "../../Card/Card";
 
@@ -18,11 +25,10 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
   const [description, setDescription] = React.useState(props.type === "ADD_SNIPPET" ? "" : props.content?.item.description || "");
   const [imageURL, setimageURL] = React.useState(props.type === "ADD_SNIPPET" ? "" : props.content?.item.imageURL || "");
 
-  const processSnippetName = (value: string) => value.replace(/\n/g, "").replaceAll(" ", "-");
   const processName = () => processSnippetName(name);
   const processCode = () => code.replace(/\n/g, "\\n");
 
-  const localStorageKey = `marketplace:installed:snippet:${processName()}`;
+  const localStorageKey = snippetStorageKey(name);
   const isInstalled = () => !!getLocalStorageDataFromKey(localStorageKey);
   const [installedLabel, setInstalledLabel] = React.useState(isInstalled());
 
@@ -36,38 +42,35 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
     }
 
     console.debug(`Installing snippet: ${processedName}`);
-    const previousName = props.content ? processSnippetName(props.content.item.title || "") : "";
-    if (previousName && previousName !== processedName) {
-      console.debug(`Deleting outdated snippet: ${previousName}`);
+    const previousKey = props.content?.item.title ? snippetStorageKey(props.content.item.title) : "";
+    const record = JSON.stringify({
+      title: processedName,
+      code,
+      description: processedDescription,
+      imageURL,
+      custom: true
+    });
 
-      const previousKey = `marketplace:installed:snippet:${previousName}`;
-      await marketplaceStorage.removeItemAsync(previousKey);
-      const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
-      const remainingInstalledSnippetKeys = installedSnippetKeys.filter((key: string) => key !== previousKey);
-      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(remainingInstalledSnippetKeys));
-    }
+    await marketplaceStorage.mutateAsync((storage) => {
+      const keys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets).filter((key) => key !== previousKey);
 
-    await marketplaceStorage.setItemAsync(
-      localStorageKey,
-      JSON.stringify({
-        title: processedName,
-        code,
-        description: processedDescription,
-        imageURL,
-        custom: true
-      })
-    );
+      if (previousKey && previousKey !== localStorageKey) {
+        console.debug(`Deleting outdated snippet: ${previousKey}`);
+        storage.delete(previousKey);
+      }
 
-    const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
-    if (installedSnippetKeys.indexOf(localStorageKey) === -1) {
-      installedSnippetKeys.push(localStorageKey);
-      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(installedSnippetKeys));
-    }
-    const installedSnippets = installedSnippetKeys.map((key: string) => getLocalStorageDataFromKey(key)).filter(Boolean);
+      storage.set(localStorageKey, record);
+      if (!keys.includes(localStorageKey)) keys.push(localStorageKey);
+      storage.set(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(keys));
+    });
+
+    const installedSnippets = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets)
+      .map((key: string) => getLocalStorageDataFromKey(key))
+      .filter(Boolean);
     initializeSnippets(installedSnippets);
 
     Spicetify.PopupModal.hide();
-    if (props.type === "EDIT_SNIPPET") location.reload();
+    if (props.type === "EDIT_SNIPPET" && previousKey !== localStorageKey) location.reload();
   };
 
   const inputElement = React.useRef<HTMLInputElement>(null);

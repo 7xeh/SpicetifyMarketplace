@@ -54,7 +54,9 @@
       "title": "Reload",
       "description": "A page reload is required to complete this operation.",
       "reloadNow": "Reload now",
-      "reloadLater": "Reload later"
+      "reloadLater": "Reload later",
+      "pendingEnable": "starts after reload",
+      "pendingDisable": "still running until reload"
     },
     "backupModal": {
       "title": "$t(settings.backupHeading)",
@@ -102,6 +104,9 @@
       "stopLoading": "Stop loading",
       "endOfList": "You've reached the end",
       "installed": "Installed",
+      "reloadRequired_one": "{{count}} change needs a reload",
+      "reloadRequired_other": "{{count}} changes need a reload",
+      "reloadRequiredHint": "Extensions and theme scripts only start or stop after a reload",
       "nothingInstalled": "You have not installed anything yet. Browse the Extensions, Themes, Snippets, and Apps tabs to get started.",
       "noInstalledMatches": "None of your installed items match that search.",
       "storageUnreadable": "Marketplace could not read its saved data. Reload Spotify to try again.",

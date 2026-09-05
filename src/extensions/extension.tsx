@@ -27,6 +27,30 @@ import type { RepoType } from "../types/marketplace-types";
 
 const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+const INSTALLED_LIST_KEYS = [LOCALSTORAGE_KEYS.installedExtensions, LOCALSTORAGE_KEYS.installedSnippets, LOCALSTORAGE_KEYS.installedThemes];
+
+async function pruneOrphanedInstallKeys() {
+  const orphans: Record<string, string[]> = {};
+
+  for (const listKey of INSTALLED_LIST_KEYS) {
+    const keys = getStringArrayFromKey(listKey);
+    const kept = keys.filter((key) => marketplaceStorage.getItem(key) !== null);
+    if (kept.length !== keys.length) orphans[listKey] = kept;
+  }
+
+  const themeKey = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
+  const themeIsOrphaned = Boolean(themeKey) && marketplaceStorage.getItem(themeKey as string) === null;
+
+  if (!Object.keys(orphans).length && !themeIsOrphaned) return;
+
+  console.warn("Marketplace: dropping install entries that have no stored data", { orphans, themeIsOrphaned });
+
+  await marketplaceStorage.mutateAsync((storage) => {
+    for (const [listKey, kept] of Object.entries(orphans)) storage.set(listKey, JSON.stringify(kept));
+    if (themeIsOrphaned) storage.delete(LOCALSTORAGE_KEYS.themeInstalled);
+  });
+}
+
 (async function init() {
   if (!Spicetify.LocalStorage || !Spicetify.showNotification) {
     setTimeout(init, 100);
@@ -156,6 +180,8 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
   console.log("Loaded Marketplace extension");
 
+  await pruneOrphanedInstallKeys();
+
   const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
   const installedSnippets = installedSnippetKeys.map((key) => getLocalStorageDataFromKey(key)).filter(Boolean);
   initializeSnippets(installedSnippets);
@@ -181,7 +207,6 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
   }
   recordLoadedExtensions(loadedExtensions);
   recordLoadedThemeScripts([]);
-  markRuntimeLoaded();
 
   const localTheme = typeof Spicetify.Config?.current_theme === "string" ? Spicetify.Config.current_theme : "";
   marketplaceStorage.setItem(LOCALSTORAGE_KEYS.localTheme, localTheme);
@@ -193,6 +218,8 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
     }
     await initializeTheme(installedTheme);
   }
+
+  markRuntimeLoaded();
 })().catch((error) => console.error("Marketplace: failed to initialise the extension", error));
 
 async function queryRepos(type: RepoType, pageNum = 1) {

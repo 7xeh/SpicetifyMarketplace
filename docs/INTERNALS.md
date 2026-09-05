@@ -13,6 +13,7 @@ compiler and linter instructions, not prose. Everything the minifier strips is h
 - [Remote data](#remote-data)
 - [Caching and rate limiting](#caching-and-rate-limiting)
 - [Persistent storage](#persistent-storage)
+- [Pending reloads](#pending-reloads)
 - [The grid](#the-grid)
 - [Cards and installation](#cards-and-installation)
 - [Themes](#themes)
@@ -58,13 +59,18 @@ source changes nothing about the shipped bundle.
 3. Hydrates storage from IndexedDB (see [Persistent storage](#persistent-storage)).
 4. Exposes `window.Marketplace` — `reset()`, `export()`, `clearCache()`, `version`. `reset()` exists
    so a user can recover from a broken state via the dev console without reinstalling.
-5. Resolves a working jsDelivr TLD.
-6. Loads installed snippets, then extensions, then the theme.
+5. Drops install-list entries whose payload is missing (`pruneOrphanedInstallKeys()`). A key that is
+   listed as installed but has no data behind it can never be loaded, so leaving it in place would
+   report a reload as permanently pending.
+6. Resolves a working jsDelivr TLD.
+7. Loads installed snippets, then extensions, then the theme.
+8. Records what actually loaded and marks the runtime ready (see [Pending reloads](#pending-reloads)).
 
 **`initializePreload()`** — warms the manifest cache for the grid in the background so opening the
-Marketplace tab is not a cold start. It clears `sessionStorage` first. This runs concurrently with
-`init()`, but its `sessionStorage.clear()` is synchronous and happens before `init()` writes
-`marketplace-request-tld`, so the two do not race.
+Marketplace tab is not a cold start. It runs `clearMarketplaceSessionCache()` first, which drops
+`marketplace`-prefixed `sessionStorage` entries but keeps `marketplace-request-tld` and the
+`marketplace:session:*` runtime record. A blanket `sessionStorage.clear()` raced `init()` writing
+the TLD, and wiped Spotify's own session keys as collateral.
 
 Both IIFEs attach a `.catch()`. Without one, a rejection anywhere in startup silently aborts the
 rest of theme and extension loading.
@@ -196,12 +202,28 @@ wrapper or the "Installed" tab alone will exhaust the budget.
 `Storage.ts` fronts an IndexedDB store (`spicetify-marketplace` / `settings`) with a synchronous
 in-memory `Map`, because the rest of the codebase was written against a synchronous
 `localStorage`-shaped API. `hydrateMarketplaceStorage()` loads the whole store into memory, then
-migrates any legacy `marketplace:`-prefixed `localStorage` keys across.
+migrates any legacy `marketplace:`-prefixed `localStorage` keys across. Hydration retries a few
+times before giving up; callers treat a rejection as "storage unreadable" and load nothing, because
+rebuilding Spicetify's config from an empty view would look like a mass uninstall.
 
-Reads are synchronous against the map. Writes update the map immediately and queue an IndexedDB
-write. Every queued write is tracked, and `flush()` awaits them — reloading Spotify drops the
-in-memory map, so pending writes have to land first. Anything that calls `location.reload()` after
-a write should either use the `…Async` variants or call `flush()`.
+Migration writes a `spicetify-marketplace:internal:local-storage-migrated` marker alongside the
+copied records and only then deletes the `localStorage` originals. Without the marker, a key
+deleted from IndexedDB was re-imported from `localStorage` on the next launch — that is how removed
+extensions came back from the dead. The marker key is deliberately not `marketplace:`-prefixed so
+resets, exports and backups leave it alone.
+
+Reads are synchronous against the map. Writes go through `commit()`: a draft copy of the map is
+mutated, the resulting adds and deletes are diffed, applied to the live map, and persisted in a
+single IndexedDB transaction. `mutateAsync()` exposes that draft, so a multi-key change — writing a
+payload and updating its install list — either lands whole or not at all. All mutations are
+serialised through one queue so concurrent callers cannot clobber each other'"'"'s diff.
+
+If IndexedDB is unavailable or a transaction fails, the same updates and deletes are replayed
+against `localStorage` so the change is not silently lost.
+
+Every queued write is tracked, and `flush()` awaits them — reloading Spotify drops the in-memory
+map, so pending writes have to land first. Anything that calls `location.reload()` after a write
+should either use the `…Async` variants or call `flush()`.
 
 ### Key layout
 
@@ -217,16 +239,53 @@ a write should either use the `…Async` variants or call `flush()`.
 | `marketplace:installed:{user}/{repo}/{file}` | An installed extension or theme |
 | `marketplace:installed:snippet:{Dashed-Title}` | An installed snippet |
 
-Two levels: a list of keys, and the payload under each key. They can disagree — a partial reset, a
-failed write or a manual edit leaves a key listed as installed with no data behind it. Readers must
-tolerate that; `getStringArrayFromKey()` exists so a corrupt list returns `[]` instead of throwing
-and taking the grid down with it.
+Two levels: a list of keys, and the payload under each key. Install and remove write both halves in
+one `mutateAsync()` transaction, so they cannot drift apart mid-operation. They can still disagree
+after a manual edit or a restored backup, so readers must tolerate it; `getStringArrayFromKey()`
+exists so a corrupt list returns `[]` instead of throwing and taking the grid down with it, and
+startup prunes entries with no payload.
 
-Removal order matters: the list is written *before* the payload is deleted, so an interrupted
-removal can never leave a dangling list entry pointing at nothing.
+Snippet keys strip newlines and replace spaces with dashes. Derive them with `generateKey()` or
+`snippetStorageKey()` rather than rebuilding the string by hand — the card and the editor modal
+used to disagree on newlines, which made such a snippet impossible to uninstall.
 
-Snippet keys replace spaces with dashes. Derive them with `generateKey()` rather than rebuilding
-the string by hand, or the lookup will miss for any title containing a space.
+## Pending reloads
+
+Injected `<script>` tags cannot be un-injected. Removing an extension deletes its record and pulls
+it out of `Spicetify.Config.extensions`, but the code it already ran is still live until the page
+reloads. Installing one is the mirror image: nothing runs until a reload. Those two states are the
+"ghost extension" problem, and `PendingReload.ts` exists to make them visible instead of silent.
+
+At the end of `init()` the extension bundle writes what it actually loaded into `sessionStorage`:
+
+| Key | Contents |
+| --- | --- |
+| `marketplace:session:loaded-extensions` | `{ key, title }` for every extension whose script was injected |
+| `marketplace:session:loaded-theme-scripts` | `{ key, title }` for every theme `include` script injected |
+| `marketplace:session:runtime-ready` | Set once loading finished; until then the diff is suppressed |
+
+`getPendingChanges()` diffs that record against what storage now says is installed. An installed
+item that was never loaded is pending `enable`; a loaded item that is no longer installed is pending
+`disable`. Nothing else is tracked, because snippets and theme CSS are re-injected live.
+
+This is a diff, not an event log, so it self-corrects. Removing an extension and reinstalling it
+before reloading leaves the two sides equal again and the prompt disappears — the script never
+stopped running, so no reload is owed.
+
+Two consumers:
+
+- `Card.promptReloadIfNeeded()` opens the reload modal after an install or remove, but only when the
+  diff is non-empty. The old code opened it unconditionally for extensions and guessed at
+  `manifest.include` for themes.
+- `Grid` subscribes via `subscribePendingChanges()` and shows a header button, so "reload later" is
+  not a dead end.
+
+The record lives in `sessionStorage` because it describes this page load and must not survive one.
+It is written by the extension bundle and read by the app bundle; they are separate builds sharing a
+window, so module state cannot carry it.
+
+`recordLoadedExtensions()` is only reached once loading has run, so an aborted startup leaves
+`runtime-ready` unset and the diff empty rather than claiming everything is pending.
 
 ## The grid
 
@@ -456,15 +515,20 @@ Because the extension and the app are separate bundles that must agree:
 
 - `initializeSnippets()` and `injectColourScheme()` are used by both. Changing the DOM shape they
   produce — class names, tag placement — breaks the other consumer.
-- `injectUserCSS()` exists in `Utils.ts` and there is a near-duplicate code path in `Card.tsx`
-  (`fetchAndInjectUserCSS`). They must stay compatible.
+- `injectUserCSS()` in `Utils.ts` is the single entry point for swapping the active theme CSS. Cards
+  fetch the CSS through `parseCSS()` before writing anything, then hand the result to it.
 - Marker classes are load-bearing: `marketplaceCSS`, `marketplaceScheme`, `marketplaceUserCSS`,
   `marketplaceSnippets`, `marketplaceScript`. Injection removes the previous element by class
   before adding a new one, so renaming one leaks duplicate style tags.
+- `data-marketplace-extension` on an injected extension `<script>` carries its storage key. Removal
+  uses it to take the tag back out of the DOM.
+- The `marketplace:session:*` keys are written by the extension bundle and read by the app bundle.
+  Both sides go through `PendingReload.ts`; nothing else should touch them.
 - `Spicetify.Config.current_theme` and `color_scheme` are typed read-only but are written anyway,
   via `@ts-expect-error`. Other Spicetify code reads them to decide what is active.
-- `data-card-type` on the grid container is consumed by CSS to render the "no installed X" empty
-  state.
+- `data-card-type` on the grid container carries the localised section name. Nothing in this
+  stylesheet reads it any more — the empty "Installed" tab is a rendered component — but user themes
+  may, so it is kept.
 - `data-tag` on tag chips carries the *English* tag name so CSS can colour known tags regardless of
   the UI language.
 - `src/types/spicetify.d.ts` is vendored from the Spicetify CLI repo and regenerated by
@@ -482,7 +546,7 @@ reproduction; they are places the original authors flagged as unfinished.
 - `Grid` keeps `this.CONFIG` from the constructor, so a config update after mount does not reach it.
   Survivable only because the settings modal reloads the page on close.
 - The install/remove/storage code in `Card` is four near-identical blocks that should collapse into
-  a lookup.
+  a lookup, even though they now share `mutateAsync()`.
 - `CardItem` and `Snippet` each declare the other's fields as `undefined` so `Card` can accept
   either. They should be a discriminated union.
 - `ThemeCardItem` is sketched in the types file but unused; theme-only fields are optional on
@@ -496,7 +560,6 @@ reproduction; they are places the original authors flagged as unfinished.
   [react-dropdown#176](https://github.com/fraserxu/react-dropdown/pull/176) would allow disabling
   individual options. Removing them for the snippets tab instead would reset the sort when
   switching tabs, which is worse.
-- The colour scheme dropdown does not repopulate after installing a theme without a full reload.
 - `parseCSS()` assumes assets live at `{cssUrl}/../assets/`.
 - The asset base URL is recomputed on every parse rather than stored at install time.
 - Search result sorting for repos with multiple manifests uses the repo's stars for every item.

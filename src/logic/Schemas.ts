@@ -41,3 +41,16 @@ export const storedCardItemSchema = z.looseObject({
   authors: authorsSchema.optional().catch(undefined),
   tags: tagsSchema.optional().catch(undefined)
 });
+
+export const snippetSchema = z.looseObject({
+  title: z.string().trim().min(1),
+  description: z
+    .string()
+    .nullish()
+    .transform((description) => description || ""),
+  code: z.string(),
+  preview: z
+    .string()
+    .nullish()
+    .transform((preview) => preview || "")
+});

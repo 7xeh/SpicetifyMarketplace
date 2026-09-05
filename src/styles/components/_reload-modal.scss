@@ -1,6 +1,51 @@
-/* Need to hijack height because .GenericModal has it set to 90% via style attr... */
-.GenericModal[aria-label="Reload required"] {
-  height: 240px !important;
+@use "../constants.scss";
+
+/* .GenericModal gets height: 90% from an inline style attribute */
+.GenericModal:has(#marketplace-reload-container) {
+  height: auto !important;
+  max-height: 90%;
+}
+
+#marketplace-reload-container {
+  display: flex;
+  flex-direction: column;
+  color: var(--spice-text);
+}
+
+.marketplace-reload-modal__changes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.marketplace-reload-modal__change {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 12px;
+  border-radius: constants.$btn-radius;
+  background-color: var(--spice-card);
+}
+
+.marketplace-reload-modal__change-title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.marketplace-reload-modal__change-action {
+  flex-shrink: 0;
+  color: var(--spice-subtext);
+  font-size: 0.8rem;
+}
+
+.marketplace-reload-modal__change--disable .marketplace-reload-modal__change-action {
+  color: var(--spice-notification-error);
 }
 
 .marketplace-reload-modal__button-container {

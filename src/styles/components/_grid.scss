@@ -113,13 +113,21 @@
   position: relative;
   text-decoration: none !important;
   cursor: pointer;
-  background-color: transparent;
   border: none;
   background-color: var(--spice-sidebar);
   transition-duration: constants.$transition-default;
 
   &:hover {
     background-color: var(--spice-button-disabled);
+  }
+
+  &--attention {
+    background-color: var(--spice-button);
+    color: var(--spice-main);
+
+    &:hover {
+      background-color: var(--spice-button-active);
+    }
   }
 }
 
@@ -284,13 +292,6 @@
 
 .marketplace-content {
   margin-top: 60px;
-}
-
-.marketplace-empty-installed {
-  color: var(--spice-subtext);
-  margin: 0 auto;
-  max-width: 420px;
-  padding: 64px 0;
 }
 
 .marketplace-storage-error {

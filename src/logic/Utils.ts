@@ -621,13 +621,17 @@ export function sleep(ms: number | undefined) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export const processSnippetName = (value: string) => value.replace(/\n/g, "").replaceAll(" ", "-");
+
+export const snippetStorageKey = (title: string) => `marketplace:installed:snippet:${processSnippetName(title)}`;
+
 export function generateKey(props: CardProps) {
   const prefix = props.type === "snippet" ? "snippet:" : `${props.item.user}/${props.item.repo}/`;
 
   let cardId: string;
   switch (props.type) {
     case "snippet":
-      cardId = props.item.title.replaceAll(" ", "-");
+      cardId = processSnippetName(props.item.title);
       break;
     case "theme":
       cardId = props.item.manifest?.usercss || "";

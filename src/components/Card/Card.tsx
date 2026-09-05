@@ -5,10 +5,11 @@ import { withTranslation } from "react-i18next";
 import { CUSTOM_APP_PATH, LOCALSTORAGE_KEYS, SNIPPETS_PAGE_URL } from "../../constants";
 import { fetchGitHubJson } from "../../logic/GitHubApi";
 import { openModal } from "../../logic/LaunchModals";
-import { hasPendingChanges, notifyPendingChanges } from "../../logic/PendingReload";
+import { hasPendingChanges, notifyPendingChanges, wasLoadedThisSession } from "../../logic/PendingReload";
 import { CACHE_TTL } from "../../logic/RequestCache";
 import { marketplaceStorage, type StorageDraft } from "../../logic/Storage";
 import {
+  addExtensionToSpicetifyConfig,
   generateKey,
   getLocalStorageDataFromKey,
   initializeSnippets,
@@ -95,9 +96,10 @@ export class Card extends React.Component<
 
     Object.assign(this, props);
 
-    this.tags = Array.isArray(props.item.tags) ? [...props.item.tags] : [];
-    if (props.item.include?.length) this.tags.push(t("grid.externalJS"));
-    if (props.item.archived) this.tags.push(t("grid.archived"));
+    const tags = Array.isArray(props.item.tags) ? props.item.tags.filter((tag): tag is string => typeof tag === "string") : [];
+    if (props.item.include?.length) tags.push(t("grid.externalJS"));
+    if (props.item.archived) tags.push(t("grid.archived"));
+    this.tags = [...new Set(tags)];
 
     this.state = {
       installed: marketplaceStorage.getItem(this.localStorageKey) !== null,
@@ -246,6 +248,8 @@ export class Card extends React.Component<
         storage.set(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify([...installedExtensions, this.localStorageKey]));
       }
     });
+
+    if (wasLoadedThisSession(this.localStorageKey)) addExtensionToSpicetifyConfig(manifest?.main);
 
     console.debug("Installed");
     this.setState({ installed: true });

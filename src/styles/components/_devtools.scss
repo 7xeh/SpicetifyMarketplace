@@ -4,7 +4,7 @@
   position: relative;
   background-color: var(--spice-sidebar);
   color: var(--spice-text);
-  overflow: scroll;
+  overflow: auto;
   padding: 1rem;
 }
 
@@ -13,7 +13,7 @@
   width: 100%;
   background-color: var(--spice-sidebar);
   color: var(--spice-text);
-  overflow: scroll;
+  overflow: auto;
   padding: 1rem;
   resize: none;
   font-family: monospace;
@@ -47,5 +47,5 @@
 
 .devtools-icon {
   width: 18px;
-  fill: var(--spice-button)
+  fill: var(--spice-button);
 }

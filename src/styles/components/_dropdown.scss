@@ -81,11 +81,11 @@ $dropdown-radius: constants.$btn-radius;
   content: ' ';
   display: block;
   height: 0;
-  margin-top: -ceil(2.5);
+  margin-top: -3px;
   position: absolute;
   right: 16px;
   top: 18px;
-  width: 0
+  width: 0;
 }
 
 // The expanded list
@@ -106,7 +106,7 @@ $dropdown-radius: constants.$btn-radius;
 
   .Dropdown-group > .Dropdown-title {
     padding: 8px 10px;
-    color: rgba(51, 51, 51, 1.2);
+    color: $dropdown-text-hover;
     font-weight: bold;
     text-transform: capitalize;
   }
@@ -137,7 +137,7 @@ $dropdown-radius: constants.$btn-radius;
 
 .Dropdown-noresults {
   box-sizing: border-box;
-  color: #ccc;
+  color: $dropdown-text;
   cursor: default;
   display: block;
   padding: 8px 10px;
