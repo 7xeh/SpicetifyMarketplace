@@ -110,7 +110,7 @@ const hexToRGB = (inputHex: string) => {
   }
 
   const aRgbHex = hex.match(/.{1,2}/g);
-  if (!aRgbHex || aRgbHex.length !== 3) {
+  if (aRgbHex?.length !== 3) {
     throw "Could not parse hex colour.";
   }
 
@@ -406,7 +406,7 @@ export const initColorShiftLoop = (schemes: SchemeIni) => {
 export const getColorFromUri = async (uri: string): Promise<string | undefined> => {
   const stored = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.albumArtBasedColorVibrancy, "PROMINENT");
   const vibrancy = String(stored)
-    .replace(/([A-Z])/g, "_$1")
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
     .toUpperCase();
 
   try {
@@ -428,7 +428,7 @@ export const getColorFromUri = async (uri: string): Promise<string | undefined> 
 export const generateColorPalette = async (mainColor: string, numColors: number): Promise<string[]> => {
   const mode = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.albumArtBasedColorMode, "monochrome-light");
   const modeStr = String(mode)
-    .replace(/([A-Z])/g, "-$1")
+    .replace(/([a-z])([A-Z])/g, "$1-$2")
     .toLowerCase();
 
   try {
@@ -553,24 +553,22 @@ export const getParamsFromGithubRaw = (url: string) => {
   return obj;
 };
 
-export function addToSessionStorage(items, key?) {
-  if (!items) return;
-  for (const item of items) {
-    const itemKey = key || `${item.user}-${item.repo}`;
+const PRESERVED_SESSION_KEYS = ["marketplace-request-tld"];
+const PRESERVED_SESSION_PREFIX = "marketplace:session:";
 
-    const existing = window.sessionStorage.getItem(itemKey);
+export function clearMarketplaceSessionCache() {
+  const staleKeys: string[] = [];
 
-    let parsed: unknown[] = [];
-    try {
-      const stored = existing ? JSON.parse(existing) : [];
-      if (Array.isArray(stored)) parsed = stored;
-    } catch {
-      parsed = [];
-    }
+  for (let index = 0; index < window.sessionStorage.length; index++) {
+    const key = window.sessionStorage.key(index);
+    if (!key) continue;
+    if (PRESERVED_SESSION_KEYS.includes(key) || key.startsWith(PRESERVED_SESSION_PREFIX)) continue;
+    if (!key.startsWith("marketplace")) continue;
 
-    parsed.push(item);
-    window.sessionStorage.setItem(itemKey, JSON.stringify(parsed));
+    staleKeys.push(key);
   }
+
+  for (const key of staleKeys) window.sessionStorage.removeItem(key);
 }
 export function getInvalidCSS(): string[] {
   const unparsedCSS = document.querySelector("body > style.marketplaceCSS.marketplaceUserCSS");
@@ -669,6 +667,22 @@ export const addExtensionToSpicetifyConfig = (main?: string) => {
   const name = main.split("/").pop();
   if (name && Spicetify.Config.extensions.indexOf(name) === -1) {
     Spicetify.Config.extensions.push(name);
+  }
+};
+
+export const removeExtensionFromSpicetifyConfig = (main?: string) => {
+  if (!main) return;
+
+  const name = main.split("/").pop();
+  if (!name) return;
+
+  const index = Spicetify.Config.extensions.indexOf(name);
+  if (index !== -1) Spicetify.Config.extensions.splice(index, 1);
+};
+
+export const removeInjectedExtensionScript = (storageKey: string) => {
+  for (const script of document.querySelectorAll(`script[data-marketplace-extension="${CSS.escape(storageKey)}"]`)) {
+    script.remove();
   }
 };
 

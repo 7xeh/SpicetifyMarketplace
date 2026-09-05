@@ -5,16 +5,18 @@ import { withTranslation } from "react-i18next";
 import { CUSTOM_APP_PATH, LOCALSTORAGE_KEYS, SNIPPETS_PAGE_URL } from "../../constants";
 import { fetchGitHubJson } from "../../logic/GitHubApi";
 import { openModal } from "../../logic/LaunchModals";
+import { hasPendingChanges, notifyPendingChanges } from "../../logic/PendingReload";
 import { CACHE_TTL } from "../../logic/RequestCache";
-import { marketplaceStorage } from "../../logic/Storage";
+import { marketplaceStorage, type StorageDraft } from "../../logic/Storage";
 import {
   generateKey,
   getLocalStorageDataFromKey,
-  getStringArrayFromKey,
   initializeSnippets,
   injectUserCSS,
   parseCSS,
-  parseIni
+  parseIni,
+  removeExtensionFromSpicetifyConfig,
+  removeInjectedExtensionScript
 } from "../../logic/Utils";
 import type { CardItem, CardType, Config, SchemeIni, Snippet, VisualConfig } from "../../types/marketplace-types";
 import Button from "../Button";
@@ -26,6 +28,35 @@ import AuthorsDiv from "./AuthorsDiv";
 import TagsDiv from "./TagsDiv";
 
 const Spicetify = window.Spicetify;
+
+function readStoredStringArray(value: string | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+type PreparedTheme = {
+  activeScheme: string | null;
+  item: CardItem;
+  parsedSchemes: SchemeIni;
+  record: string;
+  userCSS?: string;
+};
+
+let themeOperationQueue: Promise<void> = Promise.resolve();
+
+function queueThemeOperation<T>(operation: () => Promise<T>) {
+  const result = themeOperationQueue.then(operation);
+  themeOperationQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
 
 export type CardProps = {
   item: CardItem | Snippet;
@@ -85,9 +116,26 @@ export class Card extends React.Component<
 
   mounted = false;
 
+  handleOperationError(error: unknown) {
+    console.error(`Marketplace: could not update ${this.props.type} "${this.props.item.title}"`, error);
+    Spicetify.showNotification(t("notifications.marketplaceOperationError"), true);
+  }
+
   async componentDidMount() {
     this.mounted = true;
 
+    try {
+      await this.refreshInstalledItem();
+    } catch (error) {
+      this.handleOperationError(error);
+    }
+  }
+
+  componentWillUnmount() {
+    this.mounted = false;
+  }
+
+  async refreshInstalledItem() {
     if (this.props.CONFIG.activeTab !== "Installed" || this.props.type === "snippet") return;
 
     const { user, repo } = this.props.item;
@@ -115,25 +163,25 @@ export class Card extends React.Component<
 
     if (!hasNewUpdate) return;
 
-    try {
-      switch (this.props.type) {
-        case "extension":
-          await this.installExtension();
-          break;
-        case "theme":
-          await this.installTheme(true);
-          break;
-      }
-    } catch (error) {
-      console.error(`Marketplace: could not update ${this.localStorageKey}`, error);
+    switch (this.props.type) {
+      case "extension":
+        await this.installExtension();
+        break;
+      case "theme":
+        await this.installTheme(true);
+        break;
     }
   }
 
-  componentWillUnmount() {
-    this.mounted = false;
+  async buttonClicked() {
+    try {
+      await this.performButtonAction();
+    } catch (error) {
+      this.handleOperationError(error);
+    }
   }
 
-  async buttonClicked() {
+  async performButtonAction() {
     if (this.props.type === "extension") {
       if (this.isInstalled()) {
         console.debug("Extension already installed, removing");
@@ -141,26 +189,11 @@ export class Card extends React.Component<
       } else {
         await this.installExtension();
       }
-      openModal("RELOAD");
+
+      this.promptReloadIfNeeded();
     } else if (this.props.type === "theme") {
-      const themeKey = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
-      const previousTheme = themeKey ? getLocalStorageDataFromKey(themeKey, {}) : {};
-
-      if (this.isInstalled()) {
-        console.debug("Theme already installed, removing");
-        await this.removeTheme(this.localStorageKey);
-      } else {
-        const localTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.localTheme);
-        if (localTheme && localTheme.toLowerCase() !== "marketplace") {
-          Spicetify.showNotification(t("notifications.wrongLocalTheme"), true, 5000);
-          return;
-        }
-
-        await this.removeTheme();
-        await this.installTheme();
-      }
-
-      if (this.props.item.manifest?.include?.length || previousTheme.include?.length) openModal("RELOAD");
+      await this.toggleTheme();
+      this.promptReloadIfNeeded();
     } else if (this.props.type === "app") {
       window.open(this.state.externalUrl, "_blank");
     } else if (this.props.type === "snippet") {
@@ -175,66 +208,73 @@ export class Card extends React.Component<
     }
   }
 
+  promptReloadIfNeeded() {
+    notifyPendingChanges();
+    if (hasPendingChanges()) openModal("RELOAD");
+  }
+
   async installExtension() {
     console.debug(`Installing extension ${this.localStorageKey}`);
     if (!this.props.item) {
       Spicetify.showNotification(t("notifications.extensionInstallationError"), true);
       return;
     }
-    const { manifest, title, subtitle, authors, user, repo, branch, imageURL, extensionURL, readmeURL, lastUpdated, created } = this.props.item;
-    await marketplaceStorage.setItemAsync(
-      this.localStorageKey,
-      JSON.stringify({
-        manifest,
-        type: this.props.type,
-        title,
-        subtitle,
-        authors,
-        user,
-        repo,
-        branch,
-        imageURL,
-        extensionURL,
-        readmeURL,
-        stars: this.state.stars,
-        lastUpdated,
-        created
-      })
-    );
 
-    const installedExtensions = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedExtensions);
-    if (installedExtensions.indexOf(this.localStorageKey) === -1) {
-      installedExtensions.push(this.localStorageKey);
-      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(installedExtensions));
-    }
+    const { manifest, title, subtitle, authors, user, repo, branch, imageURL, extensionURL, readmeURL, lastUpdated, created } = this.props.item;
+    const record = JSON.stringify({
+      manifest,
+      type: this.props.type,
+      title,
+      subtitle,
+      authors,
+      user,
+      repo,
+      branch,
+      imageURL,
+      extensionURL,
+      readmeURL,
+      stars: this.state.stars,
+      tags: this.tags,
+      lastUpdated,
+      created
+    });
+
+    await marketplaceStorage.mutateAsync((storage: StorageDraft) => {
+      storage.set(this.localStorageKey, record);
+      const installedExtensions = readStoredStringArray(storage.get(LOCALSTORAGE_KEYS.installedExtensions));
+      if (!installedExtensions.includes(this.localStorageKey)) {
+        storage.set(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify([...installedExtensions, this.localStorageKey]));
+      }
+    });
 
     console.debug("Installed");
     this.setState({ installed: true });
   }
 
   async removeExtension() {
-    const extValue = marketplaceStorage.getItem(this.localStorageKey);
-    if (extValue) {
-      console.debug(`Removing extension ${this.localStorageKey}`);
+    console.debug(`Removing extension ${this.localStorageKey}`);
 
-      const installedExtensions = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedExtensions);
-      const remainingInstalledExtensions = installedExtensions.filter((key) => key !== this.localStorageKey);
-      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(remainingInstalledExtensions));
+    const stored = getLocalStorageDataFromKey(this.localStorageKey);
 
-      await marketplaceStorage.removeItemAsync(this.localStorageKey);
+    await marketplaceStorage.mutateAsync((storage: StorageDraft) => {
+      storage.delete(this.localStorageKey);
+      const installedExtensions = readStoredStringArray(storage.get(LOCALSTORAGE_KEYS.installedExtensions));
+      storage.set(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(installedExtensions.filter((key) => key !== this.localStorageKey)));
+    });
 
-      console.debug("Removed");
-      this.setState({ installed: false });
-    }
+    removeInjectedExtensionScript(this.localStorageKey);
+    removeExtensionFromSpicetifyConfig(stored?.manifest?.main);
+
+    console.debug("Removed");
+    this.setState({ installed: false });
   }
 
-  async installTheme(update = false) {
-    const { item } = this.props;
+  async prepareTheme(update = false): Promise<PreparedTheme | null> {
+    const item = this.props.item as CardItem;
     if (!item) {
       Spicetify.showNotification(t("notifications.themeInstallationError"), true);
-      return;
+      return null;
     }
-    console.debug(`Installing theme ${this.localStorageKey}`);
 
     let parsedSchemes: SchemeIni = {};
     let currentScheme: string | null = null;
@@ -275,44 +315,55 @@ export class Card extends React.Component<
       created
     } = item;
 
-    marketplaceStorage.setItem(
-      this.localStorageKey,
-      JSON.stringify({
-        manifest,
-        type: this.props.type,
-        title,
-        subtitle,
-        authors,
-        user,
-        repo,
-        branch,
-        imageURL,
-        extensionURL,
-        readmeURL,
-        stars: this.state.stars,
-        tags: this.tags,
-        cssURL,
-        schemesURL,
-        include,
-        schemes: parsedSchemes,
-        activeScheme,
-        lastUpdated,
-        created
-      })
-    );
+    const record = JSON.stringify({
+      manifest,
+      type: this.props.type,
+      title,
+      subtitle,
+      authors,
+      user,
+      repo,
+      branch,
+      imageURL,
+      extensionURL,
+      readmeURL,
+      stars: this.state.stars,
+      tags: this.tags,
+      cssURL,
+      schemesURL,
+      include,
+      schemes: parsedSchemes,
+      activeScheme,
+      lastUpdated,
+      created
+    });
 
-    const installedThemes = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedThemes);
-    if (installedThemes.indexOf(this.localStorageKey) === -1) {
-      installedThemes.push(this.localStorageKey);
-      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(installedThemes));
-
-      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.themeInstalled, this.localStorageKey);
+    let userCSS: string | undefined;
+    if (!item.include?.length) {
+      const tld = window.sessionStorage.getItem("marketplace-request-tld") || undefined;
+      userCSS = await parseCSS(item, tld);
     }
+
+    return { activeScheme, item, parsedSchemes, record, userCSS };
+  }
+
+  async installPreparedTheme({ activeScheme, item, parsedSchemes, record, userCSS }: PreparedTheme, previousThemeKey?: string | null) {
+    console.debug(`Installing theme ${this.localStorageKey}`);
+
+    await marketplaceStorage.mutateAsync((storage: StorageDraft) => {
+      const installedThemes = readStoredStringArray(storage.get(LOCALSTORAGE_KEYS.installedThemes)).filter(
+        (key) => key !== previousThemeKey && key !== this.localStorageKey
+      );
+      if (previousThemeKey && previousThemeKey !== this.localStorageKey) storage.delete(previousThemeKey);
+      storage.set(this.localStorageKey, record);
+      storage.set(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify([...installedThemes, this.localStorageKey]));
+      storage.set(LOCALSTORAGE_KEYS.themeInstalled, this.localStorageKey);
+    });
 
     console.debug("Installed");
 
-    if (!item.include) {
-      this.fetchAndInjectUserCSS(this.localStorageKey);
+    if (!item.include?.length) {
+      injectUserCSS(userCSS);
       this.props.updateActiveTheme(this.localStorageKey);
       this.props.updateColourSchemes(parsedSchemes, activeScheme as string);
 
@@ -321,30 +372,8 @@ export class Card extends React.Component<
       if (name) Spicetify.Config.current_theme = name;
       // @ts-expect-error: Cannot assign to 'color_scheme' because it is a read-only property
       if (activeScheme) Spicetify.Config.color_scheme = activeScheme;
-    }
-
-    this.setState({ installed: true });
-  }
-
-  async removeTheme(defaultThemeKey?: string | null) {
-    const themeKey = defaultThemeKey || marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
-
-    const themeValue = themeKey && marketplaceStorage.getItem(themeKey);
-
-    if (themeKey && themeValue) {
-      console.debug(`Removing theme ${themeKey}`);
-
-      const installedThemes = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedThemes);
-      const remainingInstalledThemes = installedThemes.filter((key) => key !== themeKey);
-      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(remainingInstalledThemes));
-
-      await marketplaceStorage.removeItemAsync(LOCALSTORAGE_KEYS.themeInstalled);
-
-      await marketplaceStorage.removeItemAsync(themeKey);
-
-      console.debug("Removed");
-
-      this.fetchAndInjectUserCSS(null);
+    } else if (previousThemeKey && previousThemeKey !== this.localStorageKey) {
+      injectUserCSS();
       this.props.updateActiveTheme(null);
       this.props.updateColourSchemes(null, null);
 
@@ -352,54 +381,109 @@ export class Card extends React.Component<
       Spicetify.Config.current_theme = "marketplace";
       // @ts-expect-error: Cannot assign to 'color_scheme' because it is a read-only property
       Spicetify.Config.color_scheme = "marketplace";
-
-      this.setState({ installed: false });
     }
-  }
-
-  async installSnippet() {
-    console.debug(`Installing snippet ${this.localStorageKey}`);
-    await marketplaceStorage.setItemAsync(
-      this.localStorageKey,
-      JSON.stringify({
-        code: this.props.item.code,
-        title: this.props.item.title,
-        description: this.props.item.description,
-        imageURL: this.props.item.imageURL
-      })
-    );
-
-    const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
-    if (installedSnippetKeys.indexOf(this.localStorageKey) === -1) {
-      installedSnippetKeys.push(this.localStorageKey);
-      await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(installedSnippetKeys));
-    }
-    const installedSnippets = installedSnippetKeys.map((key) => getLocalStorageDataFromKey(key));
-    initializeSnippets(installedSnippets);
 
     this.setState({ installed: true });
   }
 
-  async removeSnippet() {
-    const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
-    const remainingInstalledSnippetKeys = installedSnippetKeys.filter((key) => key !== this.localStorageKey);
-    await marketplaceStorage.setItemAsync(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(remainingInstalledSnippetKeys));
+  async installTheme(update = false) {
+    await queueThemeOperation(async () => {
+      const preparedTheme = await this.prepareTheme(update);
+      const activeThemeKey = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
+      if (preparedTheme) await this.installPreparedTheme(preparedTheme, activeThemeKey);
+    });
+  }
 
-    await marketplaceStorage.removeItemAsync(this.localStorageKey);
-    const remainingInstalledSnippets = remainingInstalledSnippetKeys.map((key) => getLocalStorageDataFromKey(key));
-    initializeSnippets(remainingInstalledSnippets);
+  async toggleTheme() {
+    return queueThemeOperation(async () => {
+      const themeKey = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
+
+      if (this.isInstalled()) {
+        console.debug("Theme already installed, removing");
+        await this.removeThemeNow(this.localStorageKey);
+        return;
+      }
+
+      const localTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.localTheme);
+      if (localTheme && localTheme.toLowerCase() !== "marketplace") {
+        Spicetify.showNotification(t("notifications.wrongLocalTheme"), true, 5000);
+        return;
+      }
+
+      const preparedTheme = await this.prepareTheme();
+      if (!preparedTheme) return;
+
+      await this.installPreparedTheme(preparedTheme, themeKey);
+    });
+  }
+
+  async removeThemeNow(defaultThemeKey?: string | null) {
+    const themeKey = defaultThemeKey || marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
+    const themeValue = themeKey && marketplaceStorage.getItem(themeKey);
+
+    if (!themeKey || !themeValue) return;
+
+    console.debug(`Removing theme ${themeKey}`);
+
+    await marketplaceStorage.mutateAsync((storage: StorageDraft) => {
+      storage.delete(themeKey);
+      storage.delete(LOCALSTORAGE_KEYS.themeInstalled);
+      const installedThemes = readStoredStringArray(storage.get(LOCALSTORAGE_KEYS.installedThemes));
+      storage.set(LOCALSTORAGE_KEYS.installedThemes, JSON.stringify(installedThemes.filter((key) => key !== themeKey)));
+    });
+
+    console.debug("Removed");
+
+    injectUserCSS();
+    this.props.updateActiveTheme(null);
+    this.props.updateColourSchemes(null, null);
+
+    // @ts-expect-error: Cannot assign to 'current_theme' because it is a read-only property
+    Spicetify.Config.current_theme = "marketplace";
+    // @ts-expect-error: Cannot assign to 'color_scheme' because it is a read-only property
+    Spicetify.Config.color_scheme = "marketplace";
 
     this.setState({ installed: false });
   }
 
-  async fetchAndInjectUserCSS(theme) {
-    try {
-      const tld = window.sessionStorage.getItem("marketplace-request-tld") || undefined;
-      const userCSS = theme ? await parseCSS(this.props.item as CardItem, tld) : undefined;
-      injectUserCSS(userCSS);
-    } catch (error) {
-      console.warn(error);
-    }
+  async installSnippet() {
+    console.debug(`Installing snippet ${this.localStorageKey}`);
+
+    const record = JSON.stringify({
+      code: this.props.item.code,
+      title: this.props.item.title,
+      description: this.props.item.description,
+      imageURL: this.props.item.imageURL
+    });
+
+    await marketplaceStorage.mutateAsync((storage: StorageDraft) => {
+      storage.set(this.localStorageKey, record);
+      const installedSnippetKeys = readStoredStringArray(storage.get(LOCALSTORAGE_KEYS.installedSnippets));
+      if (!installedSnippetKeys.includes(this.localStorageKey)) {
+        storage.set(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify([...installedSnippetKeys, this.localStorageKey]));
+      }
+    });
+
+    this.refreshSnippets();
+    this.setState({ installed: true });
+  }
+
+  async removeSnippet() {
+    await marketplaceStorage.mutateAsync((storage: StorageDraft) => {
+      storage.delete(this.localStorageKey);
+      const installedSnippetKeys = readStoredStringArray(storage.get(LOCALSTORAGE_KEYS.installedSnippets));
+      storage.set(LOCALSTORAGE_KEYS.installedSnippets, JSON.stringify(installedSnippetKeys.filter((key) => key !== this.localStorageKey)));
+    });
+
+    this.refreshSnippets();
+    this.setState({ installed: false });
+  }
+
+  refreshSnippets() {
+    const installedSnippetKeys = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.installedSnippets, []);
+    if (!Array.isArray(installedSnippetKeys)) return;
+
+    initializeSnippets(installedSnippetKeys.map((key) => getLocalStorageDataFromKey(key)).filter(Boolean));
   }
 
   openReadme() {

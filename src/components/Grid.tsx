@@ -10,7 +10,9 @@ import { MAIN_VIEW_SCROLL_SELECTORS, querySelectorFirst } from "../logic/Dom";
 import { fetchAppManifest, fetchCssSnippets, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
 import { fetchGitHubJson, isGitHubRateLimited } from "../logic/GitHubApi";
 import { openModal } from "../logic/LaunchModals";
+import { getPendingChanges, subscribePendingChanges } from "../logic/PendingReload";
 import { CACHE_TTL } from "../logic/RequestCache";
+import { storedCardItemSchema } from "../logic/Schemas";
 import { marketplaceStorage } from "../logic/Storage";
 import {
   cardMatchesSearch,
@@ -24,7 +26,7 @@ import {
 } from "../logic/Utils";
 import type { CardItem, CardType, Config, SchemeIni, Snippet, TabItemConfig } from "../types/marketplace-types";
 import Button from "./Button";
-import Card, { type Card as CardClass, type CardProps } from "./Card/Card";
+import Card, { type CardProps } from "./Card/Card";
 import ErrorBoundary from "./ErrorBoundary";
 import DownloadIcon from "./Icons/DownloadIcon";
 import LoadingIcon from "./Icons/LoadingIcon";
@@ -47,6 +49,8 @@ const CARD_TYPES = [
   { handle: "app", name: "Apps" }
 ] as const;
 
+type CardElement = React.ReactElement<CardProps>;
+
 class Grid extends React.Component<
   {
     title: string;
@@ -57,10 +61,11 @@ class Grid extends React.Component<
   {
     version: string;
     newUpdate: boolean;
+    pendingReloadCount: number;
     searchInput: string;
     searchValue: string;
     loadingAll: boolean;
-    cards: CardClass[];
+    cards: CardElement[];
     tabs: TabItemConfig[];
     rest: boolean;
     endOfList: boolean;
@@ -81,6 +86,7 @@ class Grid extends React.Component<
     this.state = {
       version: MARKETPLACE_VERSION,
       newUpdate: false,
+      pendingReloadCount: getPendingChanges().length,
       searchInput: "",
       searchValue: "",
       loadingAll: false,
@@ -99,7 +105,7 @@ class Grid extends React.Component<
   lastScroll = 0;
   requestQueue: never[][] = [];
   requestPage = 0;
-  cardList: CardClass[] = [];
+  cardList: CardElement[] = [];
   sortConfig: { by: string };
   gridUpdateTabs: (() => void) | null;
   gridUpdatePostsVisual: (() => void) | null;
@@ -112,6 +118,12 @@ class Grid extends React.Component<
   searchDebounce: ReturnType<typeof setTimeout> | null = null;
   scrollFrame: number | null = null;
   cancelLoadAll = false;
+  unsubscribePendingChanges: (() => void) | null = null;
+
+  refreshPendingReload = () => {
+    const pendingReloadCount = getPendingChanges().length;
+    if (pendingReloadCount !== this.state.pendingReloadCount) this.setState({ pendingReloadCount });
+  };
 
   setSearch = (searchInput: string) => {
     this.setState({ searchInput });
@@ -198,7 +210,7 @@ class Grid extends React.Component<
       />
     );
 
-    this.cardList.push(card as unknown as CardClass);
+    this.cardList.push(card);
   }
 
   updateSort(sortByValue) {
@@ -228,7 +240,7 @@ class Grid extends React.Component<
   updatePostsVisual() {
     this.cardList = this.cardList.map((card, index) => {
       return <Card {...card.props} key={index.toString()} CONFIG={this.CONFIG} />;
-    }) as unknown as CardClass[];
+    });
     this.setState({ cards: [...this.cardList] });
   }
 
@@ -304,17 +316,17 @@ class Grid extends React.Component<
           if (installedStuff[type].length) {
             const installedOfType: (CardItem | Snippet)[] = [];
             for (const itemKey of installedStuff[type]) {
-              const installedItem = getLocalStorageDataFromKey(itemKey);
+              const parsedItem = storedCardItemSchema.safeParse(getLocalStorageDataFromKey(itemKey));
               if (this.requestQueue.length > 1 && queue !== this.requestQueue[0]) {
                 return -1;
               }
 
-              if (!isRenderableCardItem(installedItem)) {
-                console.warn(`Marketplace: dropping unreadable installed item "${itemKey}"`);
+              if (!parsedItem.success || !isRenderableCardItem(parsedItem.data)) {
+                console.warn(`Marketplace: dropping unreadable installed item "${itemKey}"`, parsedItem.error);
                 continue;
               }
 
-              installedOfType.push(installedItem);
+              installedOfType.push(parsedItem.data as CardItem | Snippet);
             }
 
             sortCardItems(installedOfType, marketplaceStorage.getItem("marketplace:sort") || "stars");
@@ -482,6 +494,9 @@ class Grid extends React.Component<
   async componentDidMount() {
     void this.checkForUpdates();
 
+    this.unsubscribePendingChanges = subscribePendingChanges(this.refreshPendingReload);
+    this.refreshPendingReload();
+
     this.gridUpdateTabs = this.updateTabs.bind(this);
     this.gridUpdatePostsVisual = this.updatePostsVisual.bind(this);
 
@@ -507,6 +522,8 @@ class Grid extends React.Component<
   }
 
   componentWillUnmount(): void {
+    this.unsubscribePendingChanges?.();
+    this.unsubscribePendingChanges = null;
     this.gridUpdateTabs = this.gridUpdatePostsVisual = null;
     const viewPort = this.viewPort ?? querySelectorFirst(MAIN_VIEW_SCROLL_SELECTORS);
     if (viewPort) {
@@ -590,11 +607,24 @@ class Grid extends React.Component<
     const isLoading = !rest || loadingAll;
 
     const searchStatus = isSearching && loadedCount ? t("grid.searchStatus", { matches, loaded: loadedCount }) : null;
+    const installedTabIsEmpty = this.CONFIG.activeTab === "Installed" && endOfList && matches === 0;
 
     return (
       <section className="contentSpacing">
         <div className="marketplace-header">
           <div className="marketplace-header__left">
+            {this.state.pendingReloadCount ? (
+              <Tooltip label={t("grid.reloadRequiredHint")} renderInline={true} placement="bottom">
+                <button
+                  type="button"
+                  className="marketplace-header-icon-button marketplace-header-icon-button--attention"
+                  id="marketplace-reload-required"
+                  onClick={() => openModal("RELOAD")}
+                >
+                  {t("grid.reloadRequired", { count: this.state.pendingReloadCount })}
+                </button>
+              </Tooltip>
+            ) : null}
             {this.state.newUpdate ? (
               <button
                 type="button"
@@ -675,7 +705,17 @@ class Grid extends React.Component<
           }
           return null;
         })}
-        {isSearching && matches === 0 && loadedCount > 0 ? (
+        {installedTabIsEmpty ? (
+          <div className="marketplace-empty">
+            <h3 className="marketplace-empty__title">{isSearching ? t("grid.noInstalledMatches") : t("grid.nothingInstalled")}</h3>
+            {isSearching ? (
+              <div className="marketplace-empty__actions">
+                <Button onClick={this.clearSearch}>{t("grid.clearSearch")}</Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {!installedTabIsEmpty && isSearching && matches === 0 && loadedCount > 0 ? (
           <div className="marketplace-empty">
             <h3 className="marketplace-empty__title">{t("grid.noResults", { query: searchInput.trim() })}</h3>
             <p className="marketplace-empty__hint">{endOfList ? t("grid.noResultsFinal") : t("grid.noResultsHint")}</p>

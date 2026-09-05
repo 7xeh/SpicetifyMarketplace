@@ -1,60 +1,18 @@
 import { t } from "i18next";
-import { z } from "zod";
 
 import { BLACKLIST_URL, ITEMS_PER_REQUEST, SNIPPETS_URL } from "../constants";
 import type { CardItem, RepoTopic, Snippet } from "../types/marketplace-types";
 import { fetchGitHubJson, fetchJsonResource } from "./GitHubApi";
 import { CACHE_TTL, readCache, writeCache } from "./RequestCache";
+import { manifestSchema, snippetSchema } from "./Schemas";
 import { marketplaceStorage } from "./Storage";
 import { isBlacklisted, processAuthors } from "./Utils";
 
-const manifestSchema = z
-  .object({
-    name: z.string().trim().min(1),
-    description: z.string().trim().min(1),
-    main: z.string().trim().min(1).optional(),
-    usercss: z.string().trim().min(1).optional(),
-    authors: z
-      .array(
-        z
-          .object({
-            name: z.string().trim().min(1),
-            url: z.url().optional()
-          })
-          .transform(({ name, url }) => ({ name, url: url || `https://github.com/${name}` }))
-      )
-      .catch([]),
-    preview: z
-      .string()
-      .nullish()
-      .transform((preview) => preview || ""),
-    readme: z
-      .string()
-      .nullish()
-      .transform((readme) => readme || ""),
-    tags: z.union([z.array(z.string()), z.string().transform((tag) => [tag])]).catch([]),
-    branch: z.string().trim().min(1).optional(),
-    schemes: z.string().optional(),
-    include: z.array(z.string()).catch([])
-  })
-  .passthrough();
+// TODO: add sort type, order, etc?
+// https://docs.github.com/en/github/searching-for-information-on-github/searching-on-github/searching-for-repositories#search-by-topic
+// https://docs.github.com/en/rest/reference/search#search-repositories
 
-const snippetSchema = z
-  .object({
-    title: z.string().trim().min(1),
-    description: z
-      .string()
-      .nullish()
-      .transform((description) => description || ""),
-    code: z.string(),
-    preview: z
-      .string()
-      .nullish()
-      .transform((preview) => preview || "")
-  })
-  .passthrough();
-
-type ParsedManifest = z.infer<typeof manifestSchema>;
+type ParsedManifest = ReturnType<typeof manifestSchema.parse>;
 
 type SearchResponse = {
   items?: unknown[];

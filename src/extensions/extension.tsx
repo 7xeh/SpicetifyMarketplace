@@ -3,10 +3,12 @@ import { t } from "i18next";
 import { ITEMS_PER_REQUEST, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../constants";
 import { fetchAppManifest, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
 import { isGitHubRateLimited } from "../logic/GitHubApi";
+import { type LoadedEntry, markRuntimeLoaded, recordLoadedExtensions, recordLoadedThemeScripts } from "../logic/PendingReload";
 import { clearRequestCache, pruneRequestCache } from "../logic/RequestCache";
 import { hydrateMarketplaceStorage, marketplaceStorage } from "../logic/Storage";
 import {
   addExtensionToSpicetifyConfig,
+  clearMarketplaceSessionCache,
   exportMarketplace,
   getAvailableTLD,
   getLocalStorageDataFromKey,
@@ -36,14 +38,22 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
   document.body.appendChild(reactSimpleCodeEditorFix);
 
   console.log(`Initializing Spicetify Marketplace v${MARKETPLACE_VERSION}`);
-  await hydrateMarketplaceStorage();
+  try {
+    await hydrateMarketplaceStorage();
+  } catch (error) {
+    // The installed lists are unknown here, so loading nothing is safer than
+    // rebuilding Spicetify's config from an empty view.
+    console.error("Marketplace storage could not be read", error);
+    Spicetify.showNotification(t("notifications.storageUnreadable"), true, 5000);
+    return;
+  }
 
   window.Marketplace = {
     reset: resetMarketplace,
     export: exportMarketplace,
     clearCache: () => {
       clearRequestCache();
-      window.sessionStorage.clear();
+      clearMarketplaceSessionCache();
       console.log("Marketplace cache cleared, reload to refetch");
     },
     version: MARKETPLACE_VERSION
@@ -51,9 +61,9 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
   const tld = await getAvailableTLD();
 
-  const initializeExtension = (extensionKey: string) => {
+  const initializeExtension = (extensionKey: string): LoadedEntry | null => {
     const extensionManifest = getLocalStorageDataFromKey(extensionKey);
-    if (!extensionManifest?.extensionURL) return;
+    if (!extensionManifest?.extensionURL) return null;
 
     console.debug("Initializing extension: ", extensionManifest);
 
@@ -63,16 +73,19 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
     if (isGithubRawUrl(script.src)) {
       const { user, repo, branch, filePath } = getParamsFromGithubRaw(extensionManifest.extensionURL);
-      if (!user || !repo || !branch || !filePath) return;
+      if (!user || !repo || !branch || !filePath) return null;
       script.src = `https://cdn.jsdelivr.${tld}/gh/${user}/${repo}@${branch}/${filePath}`;
       if (filePath.endsWith(".mjs")) script.type = "module";
     }
 
     script.src = `${script.src}?time=${Date.now()}`;
+    script.dataset.marketplaceExtension = extensionKey;
 
     document.body.appendChild(script);
 
     addExtensionToSpicetifyConfig(extensionManifest.manifest?.main);
+
+    return { key: extensionKey, title: extensionManifest.title || extensionManifest.manifest?.name || extensionKey };
   };
 
   const initializeTheme = async (themeKey: string) => {
@@ -113,6 +126,9 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
     // @ts-expect-error: `current_theme` is read-only type in types
     Spicetify.Config.current_theme = themeManifest.manifest?.name;
 
+    const themeTitle = themeManifest.title || themeManifest.manifest?.name || themeKey;
+    const loadedThemeScripts: LoadedEntry[] = [];
+
     if (Array.isArray(themeManifest.include) && themeManifest.include.length) {
       for (const script of themeManifest.include) {
         if (typeof script !== "string" || !script) continue;
@@ -131,8 +147,11 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
         document.body.appendChild(newScript);
 
         addExtensionToSpicetifyConfig(script);
+        loadedThemeScripts.push({ key: script, title: themeTitle });
       }
     }
+
+    recordLoadedThemeScripts(loadedThemeScripts);
   };
 
   console.log("Loaded Marketplace extension");
@@ -155,9 +174,14 @@ const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
   window.sessionStorage.setItem("marketplace-request-tld", tld);
 
   const installedExtensions = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedExtensions);
+  const loadedExtensions: LoadedEntry[] = [];
   for (const extensionKey of installedExtensions) {
-    initializeExtension(extensionKey);
+    const loaded = initializeExtension(extensionKey);
+    if (loaded) loadedExtensions.push(loaded);
   }
+  recordLoadedExtensions(loadedExtensions);
+  recordLoadedThemeScripts([]);
+  markRuntimeLoaded();
 
   const localTheme = typeof Spicetify.Config?.current_theme === "string" ? Spicetify.Config.current_theme : "";
   marketplaceStorage.setItem(LOCALSTORAGE_KEYS.localTheme, localTheme);
@@ -203,7 +227,7 @@ async function loadPageRecursive(type: RepoType, pageNum: number) {
 
 (async function initializePreload() {
   console.debug("Preloading extensions and themes...");
-  window.sessionStorage.clear();
+  clearMarketplaceSessionCache();
   pruneRequestCache(MAX_CACHE_AGE_MS);
   const BLACKLIST = await getBlacklist();
   window.sessionStorage.setItem("marketplace:blacklist", JSON.stringify(BLACKLIST));

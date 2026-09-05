@@ -15,9 +15,9 @@ import type { Config, TabItemConfig } from "./types/marketplace-types";
 
 const getClientLocale = () => {
   try {
-    return Spicetify?.Locale?.getLocale?.() || "en";
+    return Spicetify?.Locale?.getLocale?.() || navigator.language || "en";
   } catch {
-    return "en";
+    return navigator.language || "en";
   }
 };
 
@@ -38,12 +38,14 @@ class App extends React.Component<
     count: number;
     CONFIG: Config;
     storageReady: boolean;
+    storageUnreadable: boolean;
   }
 > {
   state = {
     count: 0,
     CONFIG: {} as Config,
-    storageReady: false
+    storageReady: false,
+    storageUnreadable: false
   };
 
   CONFIG: Config;
@@ -126,7 +128,14 @@ class App extends React.Component<
     const clientLocale = getClientLocale();
     if (clientLocale !== i18n.language) await i18n.changeLanguage(clientLocale);
 
-    await hydrateMarketplaceStorage();
+    try {
+      await hydrateMarketplaceStorage();
+    } catch (error) {
+      console.error("Marketplace storage could not be read", error);
+      this.setState({ storageUnreadable: true });
+      return;
+    }
+
     this.CONFIG = this.createConfig();
     this.setState({
       CONFIG: this.CONFIG,
@@ -156,6 +165,7 @@ class App extends React.Component<
   }
 
   render() {
+    if (this.state.storageUnreadable) return <div className="marketplace-storage-error">{t("grid.storageUnreadable")}</div>;
     if (!this.state.storageReady) return null;
 
     return <ErrorBoundary context="App">{this.renderRoute()}</ErrorBoundary>;
