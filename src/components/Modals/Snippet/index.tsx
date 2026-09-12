@@ -70,6 +70,7 @@ const SnippetModal = (props: { content?: CardProps; type: ModalType; callback?: 
     initializeSnippets(installedSnippets);
 
     Spicetify.PopupModal.hide();
+    if (props.type === "ADD_SNIPPET") props.callback?.();
     if (props.type === "EDIT_SNIPPET" && previousKey !== localStorageKey) location.reload();
   };
 

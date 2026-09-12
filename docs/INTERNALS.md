@@ -90,12 +90,21 @@ source changes nothing about the shipped bundle.
 5. Drops install-list entries whose payload is missing (`pruneOrphanedInstallKeys()`). A key that is
    listed as installed but has no data behind it can never be loaded, so leaving it in place would
    report a reload as permanently pending.
-6. Resolves a working jsDelivr TLD.
-7. Loads installed snippets, then extensions, then the theme.
-8. Records what actually loaded and marks the runtime ready (see [Pending reloads](#pending-reloads)).
+6. If the official Marketplace is listed in `Spicetify.Config.custom_apps`, reads its install lists
+   read-only (`readSpicetifyMarketplaceInstalls()`).
+7. Resolves a working jsDelivr TLD.
+8. Loads installed snippets, then extensions, then the theme. Snippets and extensions that the
+   official Marketplace also has installed are skipped, because its own `extension.js` loads them.
+   The theme is skipped when the official Marketplace has a theme installed and `current_theme` is
+   its `marketplace` placeholder, since that is the only case where it applies one.
+9. Records what actually loaded and marks the runtime ready (see [Pending reloads](#pending-reloads)).
+   Skipped items count as loaded, so they never show up as a pending reload. The runtime is marked
+   ready even when the local theme is wrong.
 
-**`initializePreload()`** — warms the manifest cache for the grid in the background so opening the
-Marketplace tab is not a cold start. It runs `clearMarketplaceSessionCache()` first, which drops
+**`initializePreload()`** — only runs when `CATALOG_ENABLED` is on, which it currently is not; the
+app then lists only installed items and makes no catalog requests. When on, it warms the manifest
+cache for the grid in the background so opening the Marketplace tab is not a cold start. When off,
+the extension still runs the cache housekeeping below. It runs `clearMarketplaceSessionCache()` first, which drops
 `sevens-marketplace`-prefixed `sessionStorage` entries but keeps `sevens-marketplace:request-tld`
 and the `sevens-marketplace:session:*` runtime record. A blanket `sessionStorage.clear()` raced
 `init()` writing the TLD, and wiped Spotify's own session keys as collateral.
@@ -229,29 +238,29 @@ wrapper or the "Installed" tab alone will exhaust the budget.
 
 `Storage.ts` fronts an IndexedDB store (`sevens-marketplace` / `settings`) with a synchronous
 in-memory `Map`, because the rest of the codebase was written against a synchronous
-`localStorage`-shaped API. `hydrateMarketplaceStorage()` loads the whole store into memory, then
-imports the official Marketplace's data on first run. Hydration retries a few times before giving
-up; callers treat a rejection as "storage unreadable" and load nothing, because rebuilding
-Spicetify's config from an empty view would look like a mass uninstall.
+`localStorage`-shaped API. `hydrateMarketplaceStorage()` loads the whole store into memory. Hydration
+retries a few times before giving up; callers treat a rejection as "storage unreadable" and load
+nothing, because rebuilding Spicetify's config from an empty view would look like a mass uninstall.
 
-### The first-run import
+### Reading the official Marketplace's data
 
-`importUpstreamData()` looks for an official install's data in order: the `spicetify-marketplace`
+`findUpstreamData()` looks for an official install's data in order: the `spicetify-marketplace`
 IndexedDB database (used by current upstream builds and by this fork before v1.3.0), then
-`marketplace:`-prefixed `localStorage` keys (older upstream builds). Whatever it finds is **copied**
-into this fork's database and a `sevens-marketplace:internal:imported` marker is written, so it runs
-exactly once.
+`marketplace:`-prefixed `localStorage` keys (older upstream builds). The connection closes on
+`versionchange`, so it never blocks the official app from upgrading its database.
 
-The import never deletes from the source. An earlier version of this code moved the `localStorage`
-keys and removed the originals, which erased the installs of anyone who also had the official
-Marketplace — that is the bug this design exists to prevent. It is also why the two apps drift apart
-after the first launch, which is the intended behaviour: they are separate installs.
+Nothing is imported automatically. An automatic copy made both apps load the same items, and removing
+an item here did not stop the official app from loading it. `readSpicetifyMarketplaceInstalls()` is
+the read-only view the extension uses to skip duplicates at startup.
 
-`reimportSpicetifyMarketplaceData()` runs the same copy again with overwrite semantics and is exposed
-as `SevensMarketplace.importFromSpicetifyMarketplace()` for recovery from the console.
+`reimportSpicetifyMarketplaceData()` copies the official data in on request, with overwrite semantics,
+and is exposed as `SevensMarketplace.importFromSpicetifyMarketplace()`. It never deletes from the
+source. An earlier version of this code moved the `localStorage` keys and removed the originals, which
+erased the installs of anyone who also had the official Marketplace.
 
-The marker and the fallback keys below are deliberately not `marketplace:`-prefixed, so resets,
-exports and backups leave them alone.
+Databases imported by earlier builds may still hold a `sevens-marketplace:internal:imported` marker.
+It is no longer read. It and the fallback keys below are deliberately not `marketplace:`-prefixed, so
+resets, exports and backups leave them alone.
 
 Reads are synchronous against the map. Writes go through `commit()`: a draft copy of the map is
 mutated, the resulting adds and deletes are diffed, applied to the live map, and persisted in a
@@ -282,7 +291,7 @@ should either use the `…Async` variants or call `flush()`.
 | `marketplace:albumArtBasedColors*`, `:colorShift` | Colour behaviour toggles |
 | `marketplace:installed:{user}/{repo}/{file}` | An installed extension or theme |
 | `marketplace:installed:snippet:{Dashed-Title}` | An installed snippet |
-| `sevens-marketplace:internal:imported` | Set once the first-run import has run |
+| `sevens-marketplace:internal:imported` | Legacy marker from the removed first-run import; unused |
 | `sevens-marketplace:fallback:{key}` | `localStorage` shadow of a failed IndexedDB write |
 
 Two levels: a list of keys, and the payload under each key. Install and remove write both halves in
@@ -297,9 +306,9 @@ used to disagree on newlines, which made such a snippet impossible to uninstall.
 
 ## Pending reloads
 
-Injected `<script>` tags cannot be un-injected. Removing an extension deletes its record and pulls
-it out of `Spicetify.Config.extensions`, but the code it already ran is still live until the page
-reloads. Installing one is the mirror image: nothing runs until a reload. Those two states are the
+Injected `<script>` tags cannot be un-injected. Removing an extension deletes its record, but the
+code it already ran is still live until the page reloads. `Spicetify.Config.extensions` is left
+alone because the official Marketplace and the Spicetify CLI share it. Installing one is the mirror image: nothing runs until a reload. Those two states are the
 "ghost extension" problem, and `PendingReload.ts` exists to make them visible instead of silent.
 
 At the end of `init()` the extension bundle writes what it actually loaded into `sessionStorage`:
@@ -320,9 +329,9 @@ stopped running, so no reload is owed.
 
 Two consumers:
 
-- `Card.promptReloadIfNeeded()` opens the reload modal after an install or remove, but only when the
-  diff is non-empty. The old code opened it unconditionally for extensions and guessed at
-  `manifest.include` for themes.
+- `Card.performButtonAction()` handles installs and removals the way upstream does. It always opens
+  the reload modal for extensions, and for themes only when the new or previous theme includes
+  scripts. The modal lists the diff when there is one.
 - `Grid` subscribes via `subscribePendingChanges()` and shows a header button, so "reload later" is
   not a dead end.
 
@@ -609,8 +618,6 @@ Because the extension and the app are separate bundles that must agree:
   `DOM_PREFIX` and exported from `Utils.ts`. Injection removes the previous element by class before
   adding a new one, so renaming one leaks duplicate style tags. The prefix is what stops an official
   Marketplace install from removing this fork's style tags and vice versa.
-- `data-marketplace-extension` on an injected extension `<script>` carries its storage key. Removal
-  uses it to take the tag back out of the DOM.
 - The `sevens-marketplace:session:*` keys are written by the extension bundle and read by the app
   bundle. Both sides go through `PendingReload.ts`; nothing else should touch them.
 - `Spicetify.Config.current_theme` and `color_scheme` are typed read-only but are written anyway,

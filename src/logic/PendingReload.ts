@@ -70,7 +70,7 @@ function titleForKey(key: string, fallback: string) {
   return fallback;
 }
 
-function currentThemeScripts(): LoadedEntry[] {
+export function installedThemeScripts(): LoadedEntry[] {
   const themeKey = getLocalStorageDataFromKey(LOCALSTORAGE_KEYS.themeInstalled, null);
   if (typeof themeKey !== "string" || !themeKey) return [];
 
@@ -97,10 +97,6 @@ function diff(loaded: LoadedEntry[], current: LoadedEntry[]): PendingChange[] {
   return changes;
 }
 
-export function wasLoadedThisSession(key: string) {
-  return readEntries(SESSION_KEYS.loadedExtensions).some((entry) => entry.key === key);
-}
-
 export function getPendingChanges(): PendingChange[] {
   if (!isRuntimeLoaded()) return [];
 
@@ -110,12 +106,8 @@ export function getPendingChanges(): PendingChange[] {
 
   return [
     ...diff(readEntries(SESSION_KEYS.loadedExtensions), installedExtensions),
-    ...diff(readEntries(SESSION_KEYS.loadedThemeScripts), currentThemeScripts())
+    ...diff(readEntries(SESSION_KEYS.loadedThemeScripts), installedThemeScripts())
   ];
-}
-
-export function hasPendingChanges() {
-  return getPendingChanges().length > 0;
 }
 
 export function notifyPendingChanges() {

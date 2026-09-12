@@ -2,24 +2,23 @@ import { t } from "i18next";
 import React, { type Key } from "react";
 import { withTranslation } from "react-i18next";
 
-import { APP_ID, APP_NAME, CUSTOM_APP_PATH, LOCALSTORAGE_KEYS, SESSION_KEYS, SNIPPETS_PAGE_URL, THEME_PLACEHOLDER_NAMES } from "../../constants";
+import {
+  APP_ID,
+  APP_NAME,
+  CATALOG_ENABLED,
+  CUSTOM_APP_PATH,
+  LOCALSTORAGE_KEYS,
+  SESSION_KEYS,
+  SNIPPETS_PAGE_URL,
+  THEME_PLACEHOLDER_NAMES
+} from "../../constants";
 import { fetchRepoCardItems } from "../../logic/FetchRemotes";
 import { fetchGitHubJson } from "../../logic/GitHubApi";
 import { openModal } from "../../logic/LaunchModals";
-import { hasPendingChanges, notifyPendingChanges, wasLoadedThisSession } from "../../logic/PendingReload";
+import { notifyPendingChanges } from "../../logic/PendingReload";
 import { CACHE_TTL } from "../../logic/RequestCache";
 import { marketplaceStorage, type StorageDraft } from "../../logic/Storage";
-import {
-  addExtensionToSpicetifyConfig,
-  generateKey,
-  getLocalStorageDataFromKey,
-  initializeSnippets,
-  injectUserCSS,
-  parseCSS,
-  parseIni,
-  removeExtensionFromSpicetifyConfig,
-  removeInjectedExtensionScript
-} from "../../logic/Utils";
+import { generateKey, getLocalStorageDataFromKey, initializeSnippets, injectUserCSS, parseCSS, parseIni } from "../../logic/Utils";
 import type { CardItem, CardType, Config, SchemeIni, Snippet, VisualConfig } from "../../types/marketplace-types";
 import Button from "../Button";
 import DownloadIcon from "../Icons/DownloadIcon";
@@ -146,6 +145,7 @@ export class Card extends React.Component<
   }
 
   async refreshInstalledItem() {
+    if (!CATALOG_ENABLED) return;
     if (this.props.CONFIG.activeTab !== "Installed" || this.props.type === "snippet") return;
 
     const { user, repo } = this.state.item;
@@ -215,6 +215,7 @@ export class Card extends React.Component<
   // a stale cache, or the image moved and the push predates the install. Re-read the manifest once
   // so the card can heal itself instead of showing the placeholder until the next release.
   async recoverFromBrokenImage() {
+    if (!CATALOG_ENABLED) return;
     if (this.recoveredBrokenImage || this.props.CONFIG.activeTab !== "Installed") return;
     if (this.props.type === "snippet" || !this.isInstalled()) return;
 
@@ -251,10 +252,12 @@ export class Card extends React.Component<
         await this.installExtension();
       }
 
-      this.promptReloadIfNeeded();
+      notifyPendingChanges();
+      openModal("RELOAD");
     } else if (this.props.type === "theme") {
-      await this.toggleTheme();
-      this.promptReloadIfNeeded();
+      const shouldReload = await this.toggleTheme();
+      notifyPendingChanges();
+      if (shouldReload) openModal("RELOAD");
     } else if (this.props.type === "app") {
       window.open(this.state.externalUrl, "_blank");
     } else if (this.props.type === "snippet") {
@@ -267,11 +270,6 @@ export class Card extends React.Component<
     } else {
       console.error("Unknown card type");
     }
-  }
-
-  promptReloadIfNeeded() {
-    notifyPendingChanges();
-    if (hasPendingChanges()) openModal("RELOAD");
   }
 
   async installExtension(override?: CardItem) {
@@ -310,8 +308,6 @@ export class Card extends React.Component<
       }
     });
 
-    if (wasLoadedThisSession(this.localStorageKey)) addExtensionToSpicetifyConfig(manifest?.main);
-
     console.debug("Installed");
     this.setState({ installed: true });
   }
@@ -319,16 +315,11 @@ export class Card extends React.Component<
   async removeExtension() {
     console.debug(`Removing extension ${this.localStorageKey}`);
 
-    const stored = getLocalStorageDataFromKey(this.localStorageKey);
-
     await marketplaceStorage.mutateAsync((storage: StorageDraft) => {
       storage.delete(this.localStorageKey);
       const installedExtensions = readStoredStringArray(storage.get(LOCALSTORAGE_KEYS.installedExtensions));
       storage.set(LOCALSTORAGE_KEYS.installedExtensions, JSON.stringify(installedExtensions.filter((key) => key !== this.localStorageKey)));
     });
-
-    removeInjectedExtensionScript(this.localStorageKey);
-    removeExtensionFromSpicetifyConfig(stored?.manifest?.main);
 
     console.debug("Removed");
     this.setState({ installed: false });
@@ -447,23 +438,25 @@ export class Card extends React.Component<
   async toggleTheme() {
     return queueThemeOperation(async () => {
       const themeKey = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
+      const previousTheme = themeKey ? getLocalStorageDataFromKey(themeKey, {}) : {};
 
       if (this.isInstalled()) {
         console.debug("Theme already installed, removing");
         await this.removeThemeNow(this.localStorageKey);
-        return;
+      } else {
+        const localTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.localTheme);
+        if (localTheme && !THEME_PLACEHOLDER_NAMES.includes(localTheme.toLowerCase())) {
+          Spicetify.showNotification(t("notifications.wrongLocalTheme"), true, 5000);
+          return false;
+        }
+
+        const preparedTheme = await this.prepareTheme();
+        if (!preparedTheme) return false;
+
+        await this.installPreparedTheme(preparedTheme, themeKey);
       }
 
-      const localTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.localTheme);
-      if (localTheme && !THEME_PLACEHOLDER_NAMES.includes(localTheme.toLowerCase())) {
-        Spicetify.showNotification(t("notifications.wrongLocalTheme"), true, 5000);
-        return;
-      }
-
-      const preparedTheme = await this.prepareTheme();
-      if (!preparedTheme) return;
-
-      await this.installPreparedTheme(preparedTheme, themeKey);
+      return Boolean(this.state.item.include?.length || previousTheme?.include?.length);
     });
   }
 

@@ -1,11 +1,27 @@
 import { t } from "i18next";
 
-import { APP_NAME, ITEMS_PER_REQUEST, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION, SESSION_KEYS, THEME_PLACEHOLDER_NAMES } from "../constants";
+import {
+  APP_NAME,
+  CATALOG_ENABLED,
+  ITEMS_PER_REQUEST,
+  LOCALSTORAGE_KEYS,
+  MARKETPLACE_VERSION,
+  SESSION_KEYS,
+  THEME_PLACEHOLDER_NAMES,
+  UPSTREAM_APP_IDS,
+  UPSTREAM_THEME_PLACEHOLDER
+} from "../constants";
 import { fetchAppManifest, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
 import { isGitHubRateLimited } from "../logic/GitHubApi";
-import { type LoadedEntry, markRuntimeLoaded, recordLoadedExtensions, recordLoadedThemeScripts } from "../logic/PendingReload";
+import { installedThemeScripts, type LoadedEntry, markRuntimeLoaded, recordLoadedExtensions, recordLoadedThemeScripts } from "../logic/PendingReload";
 import { clearRequestCache, pruneRequestCache } from "../logic/RequestCache";
-import { hydrateMarketplaceStorage, marketplaceStorage, reimportSpicetifyMarketplaceData } from "../logic/Storage";
+import {
+  hydrateMarketplaceStorage,
+  marketplaceStorage,
+  readSpicetifyMarketplaceInstalls,
+  reimportSpicetifyMarketplaceData,
+  type SpicetifyMarketplaceInstalls
+} from "../logic/Storage";
 import {
   addExtensionToSpicetifyConfig,
   clearMarketplaceSessionCache,
@@ -53,6 +69,20 @@ async function pruneOrphanedInstallKeys() {
   });
 }
 
+const NO_UPSTREAM_INSTALLS: SpicetifyMarketplaceInstalls = { extensions: new Set(), snippets: new Set(), theme: null };
+
+async function getSpicetifyMarketplaceInstalls() {
+  const customApps = Array.isArray(Spicetify.Config?.custom_apps) ? Spicetify.Config.custom_apps : [];
+  if (!customApps.some((app) => UPSTREAM_APP_IDS.includes(app))) return NO_UPSTREAM_INSTALLS;
+
+  try {
+    return await readSpicetifyMarketplaceInstalls();
+  } catch (error) {
+    console.warn(`${APP_NAME}: could not read the official Marketplace's installs`, error);
+    return NO_UPSTREAM_INSTALLS;
+  }
+}
+
 (async function init() {
   if (!Spicetify.LocalStorage || !Spicetify.showNotification) {
     setTimeout(init, 100);
@@ -86,6 +116,7 @@ async function pruneOrphanedInstallKeys() {
     version: MARKETPLACE_VERSION
   };
 
+  const upstreamInstalls = await getSpicetifyMarketplaceInstalls();
   const tld = await getAvailableTLD();
 
   const initializeExtension = (extensionKey: string): LoadedEntry | null => {
@@ -106,7 +137,6 @@ async function pruneOrphanedInstallKeys() {
     }
 
     script.src = `${script.src}?time=${Date.now()}`;
-    script.dataset.marketplaceExtension = extensionKey;
 
     document.body.appendChild(script);
 
@@ -185,7 +215,7 @@ async function pruneOrphanedInstallKeys() {
 
   await pruneOrphanedInstallKeys();
 
-  const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets);
+  const installedSnippetKeys = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedSnippets).filter((key) => !upstreamInstalls.snippets.has(key));
   const installedSnippets = installedSnippetKeys.map((key) => getLocalStorageDataFromKey(key)).filter(Boolean);
   initializeSnippets(installedSnippets);
 
@@ -205,6 +235,12 @@ async function pruneOrphanedInstallKeys() {
   const installedExtensions = getStringArrayFromKey(LOCALSTORAGE_KEYS.installedExtensions);
   const loadedExtensions: LoadedEntry[] = [];
   for (const extensionKey of installedExtensions) {
+    if (upstreamInstalls.extensions.has(extensionKey)) {
+      console.info(`${APP_NAME}: ${extensionKey} is also installed in the official Marketplace, leaving it to that app`);
+      loadedExtensions.push({ key: extensionKey, title: extensionKey });
+      continue;
+    }
+
     const loaded = initializeExtension(extensionKey);
     if (loaded) loadedExtensions.push(loaded);
   }
@@ -215,11 +251,17 @@ async function pruneOrphanedInstallKeys() {
   marketplaceStorage.setItem(LOCALSTORAGE_KEYS.localTheme, localTheme);
   const installedTheme = marketplaceStorage.getItem(LOCALSTORAGE_KEYS.themeInstalled);
   if (installedTheme) {
+    const upstreamAppliesTheme = Boolean(upstreamInstalls.theme) && (!localTheme || localTheme.toLocaleLowerCase() === UPSTREAM_THEME_PLACEHOLDER);
+
     if (localTheme && !THEME_PLACEHOLDER_NAMES.includes(localTheme.toLocaleLowerCase())) {
       Spicetify.showNotification(t("notifications.wrongLocalTheme"), true, 5000);
-      return;
+      recordLoadedThemeScripts(installedThemeScripts());
+    } else if (upstreamAppliesTheme) {
+      console.info(`${APP_NAME}: the official Marketplace is applying its own theme, so ${installedTheme} is not applied on top of it`);
+      recordLoadedThemeScripts(installedThemeScripts());
+    } else {
+      await initializeTheme(installedTheme);
     }
-    await initializeTheme(installedTheme);
   }
 
   markRuntimeLoaded();
@@ -255,7 +297,7 @@ async function loadPageRecursive(type: RepoType, pageNum: number) {
   console.debug(`No more ${type} results`);
 }
 
-(async function initializePreload() {
+async function initializePreload() {
   console.debug("Preloading extensions and themes...");
   clearMarketplaceSessionCache();
   pruneRequestCache(MAX_CACHE_AGE_MS);
@@ -263,7 +305,14 @@ async function loadPageRecursive(type: RepoType, pageNum: number) {
   window.sessionStorage.setItem(SESSION_KEYS.blacklist, JSON.stringify(BLACKLIST));
 
   await Promise.all([loadPageRecursive("extension", 0), loadPageRecursive("theme", 0), loadPageRecursive("app", 0)]);
-})().catch((error) => console.error(`${APP_NAME}: failed to preload repos`, error));
+}
+
+if (CATALOG_ENABLED) {
+  initializePreload().catch((error) => console.error(`${APP_NAME}: failed to preload repos`, error));
+} else {
+  clearMarketplaceSessionCache();
+  pruneRequestCache(MAX_CACHE_AGE_MS);
+}
 
 async function appendInformationToLocalStorage(array, type: RepoType) {
   if (!Array.isArray(array?.items)) return;

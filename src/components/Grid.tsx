@@ -5,7 +5,7 @@ import semver from "semver";
 
 const Spicetify = window.Spicetify;
 
-import { ITEMS_PER_REQUEST, LATEST_RELEASE_URL, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../constants";
+import { CATALOG_ENABLED, ITEMS_PER_REQUEST, LATEST_RELEASE_URL, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../constants";
 import { MAIN_VIEW_SCROLL_SELECTORS, querySelectorFirst } from "../logic/Dom";
 import { fetchAppManifest, fetchCssSnippets, fetchExtensionManifest, fetchThemeManifest, getBlacklist, getTaggedRepos } from "../logic/FetchRemotes";
 import { fetchGitHubJson, isGitHubRateLimited } from "../logic/GitHubApi";
@@ -516,8 +516,10 @@ class Grid extends React.Component<
       console.warn(`Marketplace: no scroll container matched ${MAIN_VIEW_SCROLL_SELECTORS.join(", ")}`);
     }
 
-    this.BLACKLIST = await getBlacklist();
-    this.SNIPPETS = await fetchCssSnippets(this.CONFIG.visual.hideInstalled);
+    if (CATALOG_ENABLED) {
+      this.BLACKLIST = await getBlacklist();
+      this.SNIPPETS = await fetchCssSnippets(this.CONFIG.visual.hideInstalled);
+    }
     this.newRequest(ITEMS_PER_REQUEST);
   }
 
@@ -726,8 +728,15 @@ class Grid extends React.Component<
             </div>
           </div>
         ) : null}
-        {this.CONFIG.activeTab === "Snippets" ? (
-          <Button classes={["marketplace-add-snippet-btn"]} onClick={() => openModal("ADD_SNIPPET")}>
+        {this.CONFIG.activeTab === (CATALOG_ENABLED ? "Snippets" : "Installed") ? (
+          <Button
+            classes={["marketplace-add-snippet-btn"]}
+            onClick={() =>
+              openModal("ADD_SNIPPET", undefined, undefined, undefined, () => {
+                if (this.CONFIG.activeTab === "Installed") this.switchTo({ value: "Installed", label: "Installed" });
+              })
+            }
+          >
             + {t("grid.addCSS")}
           </Button>
         ) : null}

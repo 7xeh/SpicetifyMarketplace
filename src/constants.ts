@@ -9,7 +9,11 @@ export const APP_NAME = "7's Marketplace";
 
 export const UPSTREAM_APP_IDS = ["marketplace", "spicetify-marketplace"];
 
+export const UPSTREAM_THEME_PLACEHOLDER = "marketplace";
+
 export const THEME_PLACEHOLDER_NAMES = [APP_ID, ...UPSTREAM_APP_IDS];
+
+export const CATALOG_ENABLED: boolean = false;
 
 export const DOM_PREFIX = "sevensMarketplace";
 
@@ -50,7 +54,7 @@ export const ALL_TABS: TabItemConfig[] = [
   { name: "Snippets", enabled: true },
   { name: "Apps", enabled: true },
   { name: "Installed", enabled: true }
-];
+].filter((tab) => CATALOG_ENABLED || tab.name === "Installed");
 
 export const ITEMS_PER_REQUEST = 100;
 

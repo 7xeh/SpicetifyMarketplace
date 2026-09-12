@@ -69,6 +69,11 @@ class App extends React.Component<
       if (tabs.filter((tab) => !tab).length > 0) {
         throw new Error("Falsey marketplace tabs key");
       }
+
+      tabs = tabs.filter((tab) => ALL_TABS.some((available) => available.name === tab.name));
+      if (!tabs.some((tab) => tab.enabled)) {
+        throw new Error("No usable marketplace tabs");
+      }
     } catch {
       tabs = ALL_TABS;
       marketplaceStorage.setItem(LOCALSTORAGE_KEYS.tabs, JSON.stringify(tabs));

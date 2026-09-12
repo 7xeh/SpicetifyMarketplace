@@ -1,7 +1,7 @@
 import { t } from "i18next";
 import React from "react";
 
-import { LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../../../constants";
+import { CATALOG_ENABLED, LOCALSTORAGE_KEYS, MARKETPLACE_VERSION } from "../../../constants";
 import { openModal } from "../../../logic/LaunchModals";
 import { getLocalStorageDataFromKey, resetMarketplace, sleep } from "../../../logic/Utils";
 import type { Config } from "../../../types/marketplace-types";
@@ -69,19 +69,25 @@ const SettingsModal = ({ CONFIG, updateAppConfig }: Props) => {
         <h2 className="settings-heading">{t("settings.optionsHeading")}</h2>
         <ConfigRow name={t("settings.starCountLabel")} storageKey="stars" modalConfig={modalConfig} updateConfig={updateConfig} />
         <ConfigRow name={t("settings.tagsLabel")} storageKey="tags" modalConfig={modalConfig} updateConfig={updateConfig} />
-        <ConfigRow name={t("settings.showArchived")} storageKey="showArchived" modalConfig={modalConfig} updateConfig={updateConfig} />
+        {CATALOG_ENABLED ? (
+          <ConfigRow name={t("settings.showArchived")} storageKey="showArchived" modalConfig={modalConfig} updateConfig={updateConfig} />
+        ) : null}
         <ConfigRow name={t("settings.devToolsLabel")} storageKey="themeDevTools" modalConfig={modalConfig} updateConfig={updateConfig} />
-        <ConfigRow name={t("settings.hideInstalledLabel")} storageKey="hideInstalled" modalConfig={modalConfig} updateConfig={updateConfig} />
+        {CATALOG_ENABLED ? (
+          <ConfigRow name={t("settings.hideInstalledLabel")} storageKey="hideInstalled" modalConfig={modalConfig} updateConfig={updateConfig} />
+        ) : null}
         <ConfigRow name={t("settings.colourShiftLabel")} storageKey="colorShift" modalConfig={modalConfig} updateConfig={updateConfig} />
         <ConfigRow name={t("settings.albumArtBasedColors")} storageKey="albumArtBasedColors" modalConfig={modalConfig} updateConfig={updateConfig} />
         {AlbumArtColorDropDowns}
       </div>
 
-      <div className="settings-block">
-        <h2 className="settings-heading">{t("settings.tabsHeading")}</h2>
-        <DnDList modalConfig={modalConfig} updateConfig={updateConfig} />
-        <p className="settings-tabs-description">({t("settings.tabsDescription")})</p>
-      </div>
+      {CATALOG_ENABLED ? (
+        <div className="settings-block">
+          <h2 className="settings-heading">{t("settings.tabsHeading")}</h2>
+          <DnDList modalConfig={modalConfig} updateConfig={updateConfig} />
+          <p className="settings-tabs-description">({t("settings.tabsDescription")})</p>
+        </div>
+      ) : null}
 
       <div className="settings-block">
         <h2 className="settings-heading">{t("settings.resetHeading")}</h2>

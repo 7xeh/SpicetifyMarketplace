@@ -679,22 +679,6 @@ export const addExtensionToSpicetifyConfig = (main?: string) => {
   }
 };
 
-export const removeExtensionFromSpicetifyConfig = (main?: string) => {
-  if (!main) return;
-
-  const name = main.split("/").pop();
-  if (!name) return;
-
-  const index = Spicetify.Config.extensions.indexOf(name);
-  if (index !== -1) Spicetify.Config.extensions.splice(index, 1);
-};
-
-export const removeInjectedExtensionScript = (storageKey: string) => {
-  for (const script of document.querySelectorAll(`script[data-marketplace-extension="${CSS.escape(storageKey)}"]`)) {
-    script.remove();
-  }
-};
-
 const compareNames = (a: CardItem | Snippet, b: CardItem | Snippet) => {
   return getCardTitle(a).localeCompare(getCardTitle(b));
 };

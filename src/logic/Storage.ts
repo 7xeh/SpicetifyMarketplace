@@ -1,10 +1,9 @@
-import { APP_ID, APP_NAME, STORAGE_PREFIX } from "../constants";
+import { APP_ID, APP_NAME, LOCALSTORAGE_KEYS, STORAGE_PREFIX } from "../constants";
 
 const DATABASE_NAME = APP_ID;
 const DATABASE_VERSION = 1;
 const STORE_NAME = "settings";
 const UPSTREAM_DATABASE_NAMES = ["spicetify-marketplace"];
-const IMPORT_MARKER_KEY = `${APP_ID}:internal:imported`;
 const FALLBACK_PREFIX = `${APP_ID}:fallback:`;
 const HYDRATION_RETRY_DELAYS_MS = [150, 400, 1000];
 
@@ -260,10 +259,9 @@ function enqueue<T>(operation: () => Promise<T>): Promise<T> {
 
 async function loadIndexedDBCache() {
   const records = await readAllRecords();
-  if (!records) return false;
+  if (!records) return;
 
   for (const record of records) cache.set(record.key, record.value);
-  return cache.has(IMPORT_MARKER_KEY);
 }
 
 async function databaseExists(name: string) {
@@ -282,6 +280,8 @@ async function readUpstreamDatabase(name: string): Promise<StoredRecord[]> {
 
   const database = await openNamedDatabase(name);
   if (!database) return [];
+
+  database.onversionchange = () => database.close();
 
   try {
     return (await readAllFrom(database)).filter((record) => isMarketplaceKey(record.key));
@@ -327,10 +327,37 @@ async function importUpstreamData(overwrite: boolean): Promise<ImportResult> {
 
   for (const { key, value } of imported) cache.set(key, value);
 
-  await persistChanges([...imported, { key: IMPORT_MARKER_KEY, value: "1" }], []);
-  cache.set(IMPORT_MARKER_KEY, "1");
+  await persistChanges(imported, []);
 
   return { source, count: imported.length };
+}
+
+export type SpicetifyMarketplaceInstalls = {
+  extensions: Set<string>;
+  snippets: Set<string>;
+  theme: string | null;
+};
+
+export async function readSpicetifyMarketplaceInstalls(): Promise<SpicetifyMarketplaceInstalls> {
+  const { records } = await findUpstreamData();
+  const values = new Map(records.map((record) => [record.key, record.value]));
+
+  const readList = (key: string) => {
+    try {
+      const parsed = JSON.parse(values.get(key) ?? "[]");
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const theme = values.get(LOCALSTORAGE_KEYS.themeInstalled);
+
+  return {
+    extensions: new Set(readList(LOCALSTORAGE_KEYS.installedExtensions)),
+    snippets: new Set(readList(LOCALSTORAGE_KEYS.installedSnippets)),
+    theme: theme && values.has(theme) ? theme : null
+  };
 }
 
 export async function hydrateMarketplaceStorage() {
@@ -338,11 +365,9 @@ export async function hydrateMarketplaceStorage() {
   if (hydrationPromise) return hydrationPromise;
 
   hydrationPromise = (async () => {
-    let alreadyImported = false;
-
     for (let attempt = 0; ; attempt++) {
       try {
-        alreadyImported = await loadIndexedDBCache();
+        await loadIndexedDBCache();
         break;
       } catch (error) {
         if (attempt >= HYDRATION_RETRY_DELAYS_MS.length) throw error;
@@ -353,12 +378,6 @@ export async function hydrateMarketplaceStorage() {
     }
 
     await drainLocalStorageFallback();
-    alreadyImported = cache.has(IMPORT_MARKER_KEY);
-
-    if (!alreadyImported) {
-      const { source, count } = await importUpstreamData(false);
-      if (count) console.log(`${APP_NAME}: imported ${count} entries from Spicetify Marketplace (${source}). The original data was left untouched.`);
-    }
 
     hydrated = true;
   })();
