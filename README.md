@@ -5,7 +5,7 @@ Continued maintenance of Spicetify Marketplace v2, forked from [spicetify/market
 [![Latest release](https://img.shields.io/github/v/release/7xeh/SpicetifyMarketplace?include_prereleases)](https://github.com/7xeh/SpicetifyMarketplace/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/7xeh/SpicetifyMarketplace/total.svg)](https://github.com/7xeh/SpicetifyMarketplace/releases)
 
-It lets you browse, download, and install extensions, themes, and CSS snippets from within the Spotify desktop client. Custom apps are listed as well, although they still require manual installation.
+It manages the extensions, themes, and CSS snippets you have installed from within the Spotify desktop client. It does not browse or fetch the public Marketplace catalog; the only network requests it makes are for the items you have installed (and its own update check).
 
 It installs alongside the official Spicetify Marketplace rather than on top of it: a separate custom app (`sevens-marketplace`), a separate placeholder theme, and a separate storage database. Installing this does not overwrite, disable, or erase an existing Marketplace install.
 
@@ -46,9 +46,11 @@ The installer only replaces previous installs of *this* fork. An official Spicet
 
 ### Your existing setup
 
-Settings and installed extensions, themes, and snippets live inside Spotify rather than on disk. On first launch this fork **copies** what the official Marketplace has — from its IndexedDB store, or from `localStorage` on older versions — into its own database, and leaves the originals exactly where they are. Both apps keep working, and from then on each tracks its own installs.
+Settings and installed extensions, themes, and snippets live inside Spotify rather than on disk. Each app keeps its own list of installs, and this fork does not copy the official Marketplace's installs automatically.
 
-If you ever need to pull that copy again, run this in the Spotify devtools console:
+When both are installed, anything the official Marketplace already has installed is left for it to load, so an item installed in both apps only runs once. Likewise, if the official Marketplace is applying a theme under its `marketplace` placeholder, this fork does not layer its own theme on top.
+
+To copy the official Marketplace's installs into this fork on purpose, run this in the Spotify devtools console:
 
 ```js
 await SevensMarketplace.importFromSpicetifyMarketplace()
@@ -75,7 +77,7 @@ This removes the custom app and its entries in the Spicetify configuration. If `
 - **Load More no longer crashes the client.** A card with a missing title caused an unhandled `TypeError` during render, which took down the entire grid. See [upstream issue #1215](https://github.com/spicetify/marketplace/issues/1215). The search predicate now tolerates absent fields, and malformed entries are discarded with a console warning rather than propagating.
 - **Removing an extension now persists.** Writes to IndexedDB were fire and forget, while the reload prompt called `location.reload()` immediately. A removal issues two writes, so an interrupted reload could apply one and lose the other, leaving an extension listed as installed but absent from the Installed tab. See [upstream issue #1186](https://github.com/spicetify/marketplace/issues/1186). Pending writes are now tracked and flushed before any reload, and an install or removal writes the payload and its install list in a single transaction, so a failure cannot leave the two disagreeing.
 - **The Installed tab no longer shows stale cards.** Installing stored a snapshot of the card, and the "check for updates" path on the Installed tab re-serialised that same snapshot instead of re-reading the repo's manifest. The stored `lastUpdated` therefore never advanced, so the check re-ran on every mount and never achieved anything — preview images, descriptions and tags stayed frozen at install time while the same item rendered correctly on the Extensions tab. The manifest is now re-read (cache bypassed) and the fresh item is what gets stored and rendered. A preview URL that 404s also triggers one refresh, which covers items whose image moved without a push.
-- **Removed extensions stop running.** Removing one now also drops it from `Spicetify.Config.extensions` and takes its `<script>` back out of the DOM. Code that already ran cannot be unloaded, so the reload prompt lists exactly what is still live and what has yet to start, driven by a diff of what actually loaded against what is installed rather than a guess.
+- **Installing and removing behaves like upstream.** Installing or removing an extension always offers a reload, and a theme offers one when it includes scripts. The reload prompt lists what is still running and what has yet to start. Removal no longer edits `Spicetify.Config.extensions`, which is shared with the official Marketplace and the Spicetify CLI.
 - **Album art based colours now work.** `Spicetify.colorExtractor` expects a Spotify URI, but the artwork URL was being passed instead, so extraction failed on every track. See [upstream issue #1098](https://github.com/spicetify/marketplace/issues/1098). The track URI is now used, local files are skipped, and an unusable result is logged and ignored rather than throwing.
 - **Hard reloads no longer produce a blank page.** The app previously rendered before Spicetify had finished populating its API namespaces, so `Ctrl+Shift+R` could leave the view empty. Rendering is now deferred until the required namespaces are available.
 - **Spotify UI changes no longer break mounting.** The tab bar and scroll container are resolved through ordered fallback selector lists backed by a `MutationObserver`, replacing a single hardcoded class name and an unbounded retry loop. If Spotify renames an internal class, the affected feature degrades instead of failing outright.
@@ -83,7 +85,8 @@ This removes the custom app and its entries in the Spicetify configuration. If `
 ### Installing side by side
 
 - The custom app, its placeholder theme, its IndexedDB database, its cached GitHub responses, and the `<style>` and `<script>` tags it injects are all namespaced to this fork. An official Marketplace install running at the same time no longer fights it over any of them.
-- Earlier builds migrated `marketplace:` keys out of `localStorage` and **deleted the originals**, which wiped the official Marketplace's installs. The first-launch import is now a copy and never removes anything.
+- Earlier builds migrated `marketplace:` keys out of `localStorage` and **deleted the originals**, which wiped the official Marketplace's installs. This fork no longer imports anything automatically, and the manual import only copies.
+- Items installed in both apps load only once, from the official Marketplace.
 - Restoring the modal shell Spotify stopped styling. `Spicetify.PopupModal` builds its markup from Spotify's old Track Credits modal; those classes were deleted in the client, leaving settings and every other modal with no padding, a close button dropped below the title, and no scroll container. Ported from [upstream PR for `fix/popupmodal-shell-styling`](https://github.com/spicetify/marketplace/tree/fix/popupmodal-shell-styling).
 
 ### Reliability
